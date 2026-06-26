@@ -143,6 +143,7 @@ GEMINI_API_KEY=          # Gemini API key for ADK
 
 ## Development Workflow
 
+0. **First-time setup**: `uv sync` (installs deps + dev group from `pyproject.toml` into `.venv`)
 1. Read the current task from PLAN.md
 2. Implement the module
 3. Write tests

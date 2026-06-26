@@ -5,9 +5,9 @@
 ### Module 1: Project Scaffold
 - **Priority**: 1 (first)
 - **Purpose**: Set up project structure, dependencies, pydantic schemas
-- **Files**: requirements.txt, models/schemas.py, config/settings.py, agents/__init__.py, tools/__init__.py
+- **Files**: pyproject.toml, uv.lock, models/schemas.py, config/settings.py, agents/__init__.py, tools/__init__.py
 - **Dependencies**: None
-- **Acceptance**: `pip install -r requirements.txt` succeeds, schemas importable
+- **Acceptance**: `uv sync` succeeds, schemas importable
 
 ### Module 2: Transit API Client
 - **Priority**: 1
