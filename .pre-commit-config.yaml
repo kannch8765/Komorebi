@@ -1,0 +1,10 @@
+repos:
+  - repo: local
+    hooks:
+      - id: komorebi-guard
+        name: Komorebi personal info + author guard
+        language: python
+        entry: python scripts/pre_commit_hooks/komorebi_guard.py
+        additional_dependencies: []
+        types: [file]
+        pass_filenames: false
