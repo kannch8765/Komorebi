@@ -6,11 +6,26 @@ GEMINI_API_KEY env vars; see CLAUDE.md). Type 'exit' to quit.
 
 from __future__ import annotations
 
+import asyncio
 
-def main() -> None:
-    """Run the Coordinator agent via ADK's InMemoryRunner in an interactive REPL."""
-    from google.adk.runners import InMemoryRunner
+
+async def _run_turn(runner, user_id: str, session_id: str, text: str) -> None:
+    """One async turn: send the user message, print text events as they stream."""
     from google.genai import types
+
+    content = types.Content(role="user", parts=[types.Part(text=text)])
+    async for event in runner.run_async(
+        user_id=user_id, session_id=session_id, new_message=content
+    ):
+        if event.content and event.content.parts:
+            for part in event.content.parts:
+                if part.text:
+                    print(part.text)
+
+
+async def _main_async() -> None:
+    """Async entry: create session, then loop over user input via asyncio.to_thread."""
+    from google.adk.runners import InMemoryRunner
 
     from agents.coordinator import create_coordinator
 
@@ -21,11 +36,13 @@ def main() -> None:
     print("東京でのお出かけをお手伝いします。'exit' で終了。\n")
 
     user_id = "local_user"
-    session = runner.session_service.create_session_sync(app_name="komorebi", user_id=user_id)
+    session = await runner.session_service.create_session(
+        app_name="komorebi", user_id=user_id
+    )
 
     while True:
         try:
-            user_input = input("> ")
+            user_input = await asyncio.to_thread(input, "> ")
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -34,12 +51,12 @@ def main() -> None:
                 continue
             break
 
-        content = types.Content(role="user", parts=[types.Part(text=user_input)])
-        for event in runner.run(user_id=user_id, session_id=session.id, new_message=content):
-            if event.content and event.content.parts:
-                for part in event.content.parts:
-                    if part.text:
-                        print(part.text)
+        await _run_turn(runner, user_id, session.id, user_input)
+
+
+def main() -> None:
+    """Run the Coordinator agent via ADK's InMemoryRunner in an interactive REPL."""
+    asyncio.run(_main_async())
 
 
 if __name__ == "__main__":

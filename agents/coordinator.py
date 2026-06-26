@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from google.adk.agents import Agent
 
 
-def create_coordinator(model: str = "gemini-2.0-flash") -> "Agent":
+def create_coordinator(model: str = "gemini-3.1-flash-lite") -> "Agent":
     """Build the L1 Coordinator with Route + Weather sub-agents."""
     from google.adk.agents import Agent
 

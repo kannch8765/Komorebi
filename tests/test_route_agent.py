@@ -22,7 +22,7 @@ def _mock_client(routes: list[dict] | None = None, side_effect: Exception | None
     return mock
 
 
-def test_get_transit_routes_returns_dict_of_routes():
+def test_get_transit_routes_returns_dict_of_routes(mocker):
     routes = [
         {
             "name": "最短ルート",
@@ -34,36 +34,40 @@ def test_get_transit_routes_returns_dict_of_routes():
             "lines": ["JR山手線", "丸ノ内線"],
         }
     ]
-    client = _mock_client(routes=routes)
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": routes})
 
-    result = get_transit_routes("渋谷", "池袋", client=client)
+    result = get_transit_routes("渋谷", "池袋")
 
     assert result == {"routes": routes}
-    client.get_routes.assert_called_once_with("渋谷", "池袋")
+    instance.get_routes.assert_called_once_with("渋谷", "池袋")
 
 
-def test_get_transit_routes_empty_routes():
-    client = _mock_client(routes=[])
+def test_get_transit_routes_empty_routes(mocker):
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": []})
 
-    result = get_transit_routes("渋谷", "池袋", client=client)
+    result = get_transit_routes("渋谷", "池袋")
 
     assert result == {"routes": []}
 
 
-def test_get_transit_routes_propagates_transit_api_error():
-    client = _mock_client(side_effect=TransitAPIError("network error"))
+def test_get_transit_routes_propagates_transit_api_error(mocker):
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.side_effect = TransitAPIError("network error")
 
     with pytest.raises(TransitAPIError, match="network error"):
-        get_transit_routes("渋谷", "池袋", client=client)
+        get_transit_routes("渋谷", "池袋")
 
 
-def test_get_transit_routes_uses_default_client_when_none():
-    """When no client is passed, the function should construct a TransitAPIClient."""
+def test_get_transit_routes_constructs_default_client():
+    """When called without a client, TransitAPIClient() is constructed internally."""
     with patch("agents.route_agent.TransitAPIClient") as MockClient:
         instance = MockClient.return_value
         instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": []})
         result = get_transit_routes("渋谷", "池袋")
         MockClient.assert_called_once()
+        instance.get_routes.assert_called_once_with("渋谷", "池袋")
         assert result == {"routes": []}
 
 

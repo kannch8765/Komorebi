@@ -27,42 +27,59 @@ def _mock_client(payload: dict | None = None, side_effect: Exception | None = No
     return mock
 
 
-def test_get_current_weather_uses_tokyo_by_default():
-    client = _mock_client()
-    result = get_current_weather(client=client)
+def test_get_current_weather_uses_tokyo_by_default(mocker):
+    """When called without coords, Tokyo defaults are used."""
+    mock = mocker.patch("agents.weather_agent.WeatherAPIClient")
+    instance = mock.return_value
+    instance.get_weather.return_value = MagicMock(
+        model_dump=lambda: {"weather": "晴れ", "temp_c": 26.0, "rain_probability": 0.1, "outdoor_suitable": True}
+    )
+    result = get_current_weather()
     assert "weather" in result
-    client.get_weather.assert_called_once_with(TOKYO_LAT, TOKYO_LON)
+    instance.get_weather.assert_called_once_with(TOKYO_LAT, TOKYO_LON)
 
 
-def test_get_current_weather_uses_provided_coords():
-    client = _mock_client()
-    get_current_weather(lat=34.7, lon=135.5, client=client)
-    client.get_weather.assert_called_once_with(34.7, 135.5)
+def test_get_current_weather_uses_provided_coords(mocker):
+    mock = mocker.patch("agents.weather_agent.WeatherAPIClient")
+    instance = mock.return_value
+    instance.get_weather.return_value = MagicMock(
+        model_dump=lambda: {"weather": "晴れ", "temp_c": 20.0, "rain_probability": 0.0, "outdoor_suitable": True}
+    )
+    get_current_weather(lat=34.7, lon=135.5)
+    instance.get_weather.assert_called_once_with(34.7, 135.5)
 
 
-def test_get_current_weather_only_lat_overrides():
+def test_get_current_weather_only_lat_overrides(mocker):
     """Partial override: lat given, lon falls back to default."""
-    client = _mock_client()
-    get_current_weather(lat=34.7, client=client)
-    client.get_weather.assert_called_once_with(34.7, TOKYO_LON)
+    mock = mocker.patch("agents.weather_agent.WeatherAPIClient")
+    instance = mock.return_value
+    instance.get_weather.return_value = MagicMock(
+        model_dump=lambda: {"weather": "晴れ", "temp_c": 20.0, "rain_probability": 0.0, "outdoor_suitable": True}
+    )
+    get_current_weather(lat=34.7)
+    instance.get_weather.assert_called_once_with(34.7, TOKYO_LON)
 
 
-def test_get_current_weather_returns_payload_dict():
+def test_get_current_weather_returns_payload_dict(mocker):
     payload = {
         "weather": "雨",
         "temp_c": 22.0,
         "rain_probability": 0.8,
         "outdoor_suitable": False,
     }
-    client = _mock_client(payload=payload)
-    result = get_current_weather(client=client)
+    mock = mocker.patch("agents.weather_agent.WeatherAPIClient")
+    instance = mock.return_value
+    instance.get_weather.return_value = MagicMock(model_dump=lambda: payload)
+    result = get_current_weather()
     assert result == payload
 
 
-def test_get_current_weather_propagates_weather_api_error():
-    client = _mock_client(side_effect=WeatherAPIError("network error"))
+def test_get_current_weather_propagates_weather_api_error(mocker):
+    mock = mocker.patch("agents.weather_agent.WeatherAPIClient")
+    instance = mock.return_value
+    instance.get_weather.side_effect = WeatherAPIError("network error")
     with pytest.raises(WeatherAPIError, match="network error"):
-        get_current_weather(client=client)
+        get_current_weather()
 
 
 def test_create_weather_agent_builds_agent_with_tool():

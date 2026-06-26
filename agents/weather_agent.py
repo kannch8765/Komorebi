@@ -4,6 +4,11 @@ Wraps WeatherAPIClient as an ADK tool. The tool function is the testable
 surface (no LLM); the Agent definition lives in `create_weather_agent()`
 so that `agents/weather_agent` imports cleanly even without `google-adk`
 on the import path.
+
+Note: the `client` parameter is NOT exposed on the public tool signature —
+ADK introspects the function to build a JSON schema for the LLM, and any
+non-primitive type causes PydanticSchemaGenerationError. Tests patch
+`agents.weather_agent.WeatherAPIClient` at the module level instead.
 """
 
 from __future__ import annotations
@@ -19,23 +24,18 @@ if TYPE_CHECKING:
 def get_current_weather(
     lat: float | None = None,
     lon: float | None = None,
-    client: WeatherAPIClient | None = None,
 ) -> dict:
-    """Fetch current weather; default to Tokyo coords if lat/lon not given.
-
-    `client` is injectable so tests can pass a mock without patching imports.
-    """
+    """Fetch current weather; default to Tokyo coords if lat/lon not given."""
     if lat is None:
         lat = TOKYO_LAT
     if lon is None:
         lon = TOKYO_LON
-    if client is None:
-        client = WeatherAPIClient()
+    client = WeatherAPIClient()
     response = client.get_weather(lat, lon)
     return response.model_dump()
 
 
-def create_weather_agent(model: str = "gemini-2.0-flash") -> "Agent":
+def create_weather_agent(model: str = "gemini-3.1-flash-lite") -> "Agent":
     """Build the Weather Agent. Requires google-adk + a valid Gemini API key."""
     from google.adk.agents import Agent
     from google.adk.tools import FunctionTool
