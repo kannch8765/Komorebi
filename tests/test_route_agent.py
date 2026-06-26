@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -59,11 +59,12 @@ def test_get_transit_routes_propagates_transit_api_error():
 
 def test_get_transit_routes_uses_default_client_when_none():
     """When no client is passed, the function should construct a TransitAPIClient."""
-    with pytest.raises(Exception):
-        # No real network call expected — but TransitAPIClient() shouldn't fail.
-        # A real call would fail with a connection error (sandboxed), which still
-        # proves the default-client path was exercised.
-        get_transit_routes("渋谷", "池袋")
+    with patch("agents.route_agent.TransitAPIClient") as MockClient:
+        instance = MockClient.return_value
+        instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": []})
+        result = get_transit_routes("渋谷", "池袋")
+        MockClient.assert_called_once()
+        assert result == {"routes": []}
 
 
 def test_create_route_agent_builds_agent_with_tool():
