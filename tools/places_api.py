@@ -14,7 +14,7 @@ Field mask: X-Goog-FieldMask header — controls which fields are billed.
 Probed shape (curl with the API key in .env on 2026-06-27):
     request:
       {
-        "includedTypes": ["cafe"],
+        "includedPrimaryTypes": ["cafe"],
         "maxResultCount": 3,
         "locationRestriction": {
           "circle": {
@@ -127,7 +127,12 @@ class PlacesAPIClient:
 
         url = f"{BASE_URL}{NEARBY_SEARCH_PATH}"
         body = {
-            "includedTypes": [place_type],
+            # includedPrimaryTypes (NOT includedTypes) so we only match
+            # places whose PRIMARY type is `place_type`. includedTypes
+            # matches anywhere in the `types` array — a hotel that has
+            # a cafe inside would match "cafe" too, which is wrong for
+            # the user query "find cafes near me".
+            "includedPrimaryTypes": [place_type],
             "maxResultCount": max_results,
             "locationRestriction": {
                 "circle": {

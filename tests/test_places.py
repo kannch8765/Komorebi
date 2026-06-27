@@ -118,7 +118,13 @@ def test_nearby_search_returns_parsed_results():
 
 @responses_lib.activate
 def test_nearby_search_sends_correct_request_body():
-    """The request body must include includedTypes + locationRestriction."""
+    """The request body must include includedPrimaryTypes + locationRestriction.
+
+    Note: we use `includedPrimaryTypes` (NOT `includedTypes`) so the API
+    matches only places whose PRIMARY type is `place_type`. Using
+    `includedTypes` would match anywhere in the `types` array — e.g. a
+    hotel with a cafe inside would falsely match a "cafe" query.
+    """
     captured: dict = {}
 
     def _callback(request):
@@ -140,12 +146,44 @@ def test_nearby_search_sends_correct_request_body():
         radius_m=750, max_results=8,
     )
 
-    assert captured["body"]["includedTypes"] == ["park"]
+    assert captured["body"]["includedPrimaryTypes"] == ["park"]
+    # Defensive: the wrong key must NOT be sent.
+    assert "includedTypes" not in captured["body"]
     assert captured["body"]["maxResultCount"] == 8
     assert captured["body"]["locationRestriction"]["circle"]["radius"] == 750
     center = captured["body"]["locationRestriction"]["circle"]["center"]
     assert center["latitude"] == 35.6812
     assert center["longitude"] == 139.7671
+
+
+@responses_lib.activate
+def test_nearby_search_uses_included_primary_types_for_cafe():
+    """Regression: cafe query must use includedPrimaryTypes so we don't
+    match hotels/establishments that merely have a cafe inside them.
+
+    Regression for the bug fixed 2026-06-27 where the request body was
+    using `includedTypes`, which matches anywhere in the `types` array.
+    """
+    captured: dict = {}
+
+    def _callback(request):
+        import json
+        captured["body"] = json.loads(request.body)
+        return (200, {}, json.dumps(_nearby_response_payload()))
+
+    responses_lib.add_callback(
+        responses_lib.POST,
+        "https://places.googleapis.com/v1/places:searchNearby",
+        callback=_callback,
+    )
+
+    client = _make_client()
+    client.nearby_search(lat=35.6580, lon=139.7016, place_type="cafe")
+
+    # The single, correct filter key for a "cafe" query.
+    assert captured["body"]["includedPrimaryTypes"] == ["cafe"]
+    # The old, looser key must not be present.
+    assert "includedTypes" not in captured["body"]
 
 
 @responses_lib.activate
