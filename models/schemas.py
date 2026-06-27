@@ -32,3 +32,41 @@ class PlaceRecommendation(BaseModel):
 
 class PlaceResponse(BaseModel):
     recommendations: list[PlaceRecommendation]
+
+
+# ---------------------------------------------------------------------------
+# Google Places API (New) — raw search result shapes
+# ---------------------------------------------------------------------------
+
+
+class LatLng(BaseModel):
+    """Latitude / longitude pair returned by the Places API."""
+
+    lat: float = Field(..., ge=-90.0, le=90.0)
+    lon: float = Field(..., ge=-180.0, le=180.0)
+
+
+class PlaceSearchResult(BaseModel):
+    """A single place returned by Places API (New) Nearby Search.
+
+    Field names mirror the API's wire format. Pydantic will tolerate
+    extra fields the API returns beyond the FieldMask — useful when we
+    later add `currentOpeningHours.periods` for richer hours info.
+
+    open_now is Optional because not every place type populates
+    currentOpeningHours (e.g. parks may not have business hours).
+    """
+
+    place_id: str
+    name: str
+    address: str
+    location: LatLng
+    types: list[str]
+    primary_type: str | None = None
+    open_now: bool | None = None
+
+
+class PlaceSearchResponse(BaseModel):
+    """Wrapper for a Nearby Search result list."""
+
+    results: list[PlaceSearchResult]
