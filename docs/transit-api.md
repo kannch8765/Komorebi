@@ -82,9 +82,9 @@ A few rules of thumb for the route_agent:
 | "急いでて 18:00 に着きたい" | `type='arrival'`, `time='18:00'`, `date` defaulted or set explicitly |
 | "21:00 始発で帰りたい" | `type='first'`, `time='21:00'` |
 | "終電で帰って" | `type='last'`, `time='23:59'` (or omit) |
-| "バスは嫌" | `avoid_modes='bus'` |
-| "電車だけで" | `allow_modes='rail'` (or `allow_modes='rail,subway'` depending on operator taxonomy) |
-| "歩きたくない" | `avoid_walk='true'` |
+| "バスは嫌" | `avoid_modes=['bus']` |
+| "電車だけで" | `allow_modes=['rail']` (or `['rail', 'subway']` depending on operator taxonomy) |
+| "歩きたくない" | `avoid_walk=True` (Python bool — the tool fn / ADK schema uses boolean; the client converts to API string internally) |
 | "新宿で買い物してから帰る" | `via=[<Shinjuku id>]` (max 3 waypoints) |
 | "乗換 0 回がいい" | `max_transfers=0` |
 

@@ -439,8 +439,7 @@ def test_trip_type_last_is_passed(mocker):
 def test_invalid_trip_type_raises(mocker):
     """trip_type outside the enum raises BEFORE making any HTTP call."""
     q = _MockQueue(mocker)
-    q.push(_shibuya_suggest_payload())  # would be popped if we got that far
-    q.patch()
+    q.patch()  # no payloads queued — the validation must short-circuit
 
     client = TransitAPIClient()
     with pytest.raises(TransitAPIError, match="invalid trip_type"):
