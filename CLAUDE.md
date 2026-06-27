@@ -5,6 +5,34 @@
 Komorebi (木漏れ日) is an AI-powered social anxiety-friendly outing assistant for Tokyo.
 It helps users plan outings that minimize crowd exposure while maximizing enjoyment.
 
+## ⚠️ Probe Real APIs Before Implementing
+
+**Before writing any client / tool / wrapper code for an external API, probe the real endpoint first.** The endpoint shapes, params, and response fields in `## API References` below may be hallucinated, outdated, or wrong — they were in past incidents (CLAUDE.md once described a fictional `GET /api/v1/routes?origin=&destination=` that didn't exist; the real API requires station IDs via `/locations/suggest` → `/plan`).
+
+**How to probe:**
+
+```bash
+# 1. Find the OpenAPI / Swagger spec (most modern APIs expose one)
+curl <base_url>/openapi.json
+curl <base_url>/api/openapi.json
+
+# 2. If no OpenAPI, fetch the landing page and look for doc links
+curl <base_url>
+
+# 3. Then curl a real endpoint to confirm the response shape
+curl "<endpoint>?<params>"
+```
+
+**Then** write the client + tests against the actual response shape. Update `## API References` below if the spec was wrong.
+
+**Red flags for fictional specs** — if you see any of these in `CLAUDE.md` or `PLAN.md`, the spec is probably hallucinated:
+- API host that's a creative permutation of common words
+- Endpoint paths that follow REST conventions but the actual API uses different verbs/paths
+- Response fields that don't match any real schema (GTFS/ODPT/OpenAPI/Google Places/etc.)
+- Endpoint that requires nothing (no IDs, no auth) — most real APIs need at least one identifier
+
+See `docs/adk-usage.md` for other ADK gotchas (PydanticSchemaGenerationError, async runner, etc.).
+
 ## Architecture
 
 ```
@@ -122,7 +150,11 @@ komorebi/
 
 ### Transit API
 - Base URL: `https://api.transit.ls8h.com`
-- Docs: check `/api/v1/feeds` and `/api/v1/operators` for data sources
+- OpenAPI spec: `https://api.transit.ls8h.com/api/openapi.json`
+- **Two-step flow** for journey search:
+  1. `GET /api/v1/locations/suggest?q={name}&limit=5` → list of `{id, name, score, weight}`; pick by `score DESC, weight DESC` (prefer rail score=3 over bus score=2)
+  2. `GET /api/v1/plan?from={from_id}&to={to_id}&numItineraries=3` → `{journeys: [{durationSecs, transferCount, legs: [{from, to, routeName}]}]}`
+- No crowding / occupancy / realtime data — crowding is computed locally by `tools/crowding.py`
 - GTFS / ODPT based
 
 ### OpenMeteo
@@ -145,11 +177,12 @@ GEMINI_API_KEY=          # Gemini API key for ADK
 
 0. **First-time setup**: `uv sync` (installs deps + dev group from `pyproject.toml` into `.venv`)
 1. Read the current task from PLAN.md
-2. Implement the module
-3. Write tests
-4. Run `pytest -v` and ensure all pass
-5. Commit with proper prefix: `git commit -m "feat: add transit API client"`
-6. Push: `git push origin main`
+2. **If the task touches an external API, [probe the real endpoint first](#️-probe-real-apis-before-implementing)** — see the callout above. Don't trust the spec in `## API References`.
+3. Implement the module (or update the spec if it was wrong)
+4. Write tests
+5. Run `pytest -v` and ensure all pass
+6. Commit with proper prefix: `git commit -m "feat: add transit API client"`
+7. Push: `git push origin main`
 
 ## Current Status
 
