@@ -46,11 +46,21 @@ This module does NOT use the googlemaps SDK — direct REST via requests
 matches our transit_api.py pattern and gives us full control over the
 FieldMask header (which is the only way to keep the per-request cost
 within the free tier).
+
+Usage tracking: each successful HTTP POST increments a counter persisted
+to `data/places_api_usage.json` (gitignored). The file is
+best-effort observability — if the write fails (permission, disk full,
+read-only test runner), the call still succeeds. Use
+`PlacesAPIClient.get_usage()` to read the current state, or run
+`scripts/check_api_usage.sh` for a quick console summary.
 """
 
 from __future__ import annotations
 
+import json
 import os
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import requests
@@ -79,6 +89,10 @@ DEFAULT_FIELD_MASK = (
 DEFAULT_RADIUS_M = 500
 DEFAULT_MAX_RESULTS = 5
 
+# Default path for the usage counter file. Gitignored via `data/` in
+# .gitignore. Overridable per-client via the constructor.
+DEFAULT_USAGE_PATH = Path("data/places_api_usage.json")
+
 
 class PlacesAPIError(Exception):
     """Raised on missing key, HTTP error, parse failure, or empty payload."""
@@ -87,7 +101,13 @@ class PlacesAPIError(Exception):
 class PlacesAPIClient:
     """Thin wrapper around Google Places API (New) — Nearby Search only."""
 
-    def __init__(self, api_key: str | None = None, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        api_key: str | None = None,
+        timeout: int = 30,
+        usage_path: Path | None = None,
+        record_usage: bool = True,
+    ) -> None:
         self.api_key = api_key or os.environ.get("GOOGLE_PLACES_API_KEY")
         if not self.api_key:
             raise PlacesAPIError(
@@ -96,6 +116,59 @@ class PlacesAPIClient:
             )
         self.timeout = timeout
         self.session = requests.Session()
+        self._usage_path = usage_path or DEFAULT_USAGE_PATH
+        self._record_usage_enabled = record_usage
+
+    @classmethod
+    def get_usage(cls, usage_path: Path | None = None) -> dict:
+        """Read the current Places API usage counter from disk.
+
+        Returns a dict with keys `total_calls`, `last_call`, `daily`
+        (date → count). Returns an empty default if the file is
+        missing — call sites don't have to guard for first-run.
+
+        Args:
+            usage_path: Override the default data/places_api_usage.json
+                        path (useful for tests with tmp_path).
+        """
+        path = usage_path or DEFAULT_USAGE_PATH
+        if not path.exists():
+            return {"total_calls": 0, "last_call": None, "daily": {}}
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            # Corrupt file — return empty rather than crash the caller.
+            return {"total_calls": 0, "last_call": None, "daily": {}}
+
+    def _record_call(self) -> None:
+        """Increment the usage counter; persist to data/places_api_usage.json.
+
+        Best-effort: if the file can't be read, written, or the parent
+        dir can't be created, we silently continue. The counter is
+        observability, not a gate — failing to record must never
+        break a Places API call.
+        """
+        if not self._record_usage_enabled:
+            return
+        try:
+            path = self._usage_path
+            data = self.get_usage(path)
+            now = datetime.now(timezone.utc)
+            data["total_calls"] = int(data.get("total_calls", 0)) + 1
+            today = now.strftime("%Y-%m-%d")
+            daily = dict(data.get("daily") or {})
+            daily[today] = int(daily.get(today, 0)) + 1
+            data["daily"] = daily
+            data["last_call"] = now.isoformat()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(
+                json.dumps(data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except OSError:
+            # Disk full, read-only filesystem, permission denied, etc.
+            # Counter is observability; never break the call.
+            pass
 
     def nearby_search(
         self,
@@ -151,6 +224,11 @@ class PlacesAPIClient:
             resp = self.session.post(url, json=body, headers=headers, timeout=self.timeout)
         except requests.RequestException as exc:
             raise PlacesAPIError(f"network error on Places API: {exc}") from exc
+
+        # Count the HTTP attempt regardless of the response status —
+        # failed requests still count against our daily budget. Counter
+        # is best-effort: if the disk write fails, the call still works.
+        self._record_call()
 
         try:
             resp.raise_for_status()

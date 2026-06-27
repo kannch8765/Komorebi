@@ -401,3 +401,168 @@ def test_default_field_mask_covers_required_fields():
     ]
     for sub in required_substrings:
         assert sub in DEFAULT_FIELD_MASK, f"field mask missing: {sub}"
+
+
+# ---------------------------------------------------------------------------
+# Usage counter (data/places_api_usage.json)
+# ---------------------------------------------------------------------------
+
+
+def test_get_usage_returns_empty_when_no_file(tmp_path):
+    """get_usage() returns a sensible default when the file is absent."""
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    data = PlacesAPIClient.get_usage(usage_path=usage_file)
+
+    assert data == {"total_calls": 0, "last_call": None, "daily": {}}
+
+
+def test_get_usage_returns_empty_when_file_corrupt(tmp_path):
+    """get_usage() tolerates a corrupt file (returns empty default)."""
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    usage_file.write_text("{ not valid json", encoding="utf-8")
+    data = PlacesAPIClient.get_usage(usage_path=usage_file)
+
+    assert data == {"total_calls": 0, "last_call": None, "daily": {}}
+
+
+@responses_lib.activate
+def test_nearby_search_records_call_to_disk(tmp_path):
+    """Each successful HTTP call increments the counter and persists it."""
+    from datetime import datetime, timezone
+
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    responses_lib.add(
+        responses_lib.POST,
+        "https://places.googleapis.com/v1/places:searchNearby",
+        json=_nearby_response_payload(),
+        status=200,
+    )
+
+    client = PlacesAPIClient(api_key="test-key", usage_path=usage_file)
+    before = datetime.now(timezone.utc)
+    client.nearby_search(lat=35.6812, lon=139.7671, place_type="cafe")
+    after = datetime.now(timezone.utc)
+
+    # File was created and persisted with the correct shape.
+    import json
+    data = json.loads(usage_file.read_text(encoding="utf-8"))
+    assert data["total_calls"] == 1
+    assert isinstance(data["last_call"], str)
+    # ISO 8601 timestamp between before and after the call.
+    ts = datetime.fromisoformat(data["last_call"])
+    assert before <= ts <= after
+    # Daily bucket for today.
+    today = before.strftime("%Y-%m-%d")
+    assert data["daily"] == {today: 1}
+
+
+@responses_lib.activate
+def test_nearby_search_counter_increments_across_calls(tmp_path):
+    """Multiple calls accumulate; the daily bucket increments per call."""
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    # Register 3 mock responses.
+    for _ in range(3):
+        responses_lib.add(
+            responses_lib.POST,
+            "https://places.googleapis.com/v1/places:searchNearby",
+            json=_nearby_response_payload(),
+            status=200,
+        )
+
+    client = PlacesAPIClient(api_key="test-key", usage_path=usage_file)
+    for _ in range(3):
+        client.nearby_search(lat=35.6812, lon=139.7671, place_type="cafe")
+
+    data = PlacesAPIClient.get_usage(usage_path=usage_file)
+    assert data["total_calls"] == 3
+    # All 3 in today's bucket (assuming the test runs within one day).
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    assert data["daily"][today] == 3
+
+
+@responses_lib.activate
+def test_nearby_search_counts_http_errors(tmp_path):
+    """Failed HTTP requests (4xx/5xx) still increment the counter —
+    a 403 still costs us nothing on Google's side, but we want to
+    count attempts (e.g. 429 retries) against our daily budget."""
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    responses_lib.add(
+        responses_lib.POST,
+        "https://places.googleapis.com/v1/places:searchNearby",
+        json={"error": {"code": 429, "message": "rate limited"}},
+        status=429,
+    )
+
+    client = PlacesAPIClient(api_key="test-key", usage_path=usage_file)
+    with pytest.raises(PlacesAPIError, match="HTTP 429"):
+        client.nearby_search(lat=35.6812, lon=139.7671, place_type="cafe")
+
+    data = PlacesAPIClient.get_usage(usage_path=usage_file)
+    assert data["total_calls"] == 1
+
+
+@responses_lib.activate
+def test_record_usage_disabled_skips_disk_writes(tmp_path):
+    """record_usage=False must not touch the disk at all."""
+    from tools.places_api import PlacesAPIClient
+
+    usage_file = tmp_path / "usage.json"
+    responses_lib.add(
+        responses_lib.POST,
+        "https://places.googleapis.com/v1/places:searchNearby",
+        json=_nearby_response_payload(),
+        status=200,
+    )
+
+    client = PlacesAPIClient(
+        api_key="test-key", usage_path=usage_file, record_usage=False
+    )
+    client.nearby_search(lat=35.6812, lon=139.7671, place_type="cafe")
+
+    # No file created.
+    assert not usage_file.exists()
+    # And get_usage() confirms the empty default.
+    data = PlacesAPIClient.get_usage(usage_path=usage_file)
+    assert data == {"total_calls": 0, "last_call": None, "daily": {}}
+
+
+@responses_lib.activate
+def test_nearby_search_swallows_disk_write_failure(tmp_path):
+    """If the parent dir is not writable, the call must still succeed.
+
+    We point the counter at a path whose parent dir does not exist and
+    is also non-creatable (a file in the way). The OSError is
+    swallowed, the API call returns its parsed result.
+    """
+    from tools.places_api import PlacesAPIClient
+
+    # Create a regular file where the counter wants a directory.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("not a dir", encoding="utf-8")
+    # Now we want the counter to live INSIDE `blocker/usage.json` —
+    # mkdir will fail because `blocker` is a file. Path.write_text
+    # raises OSError, which the swallow in _record_call() catches.
+    usage_file = blocker / "usage.json"
+
+    responses_lib.add(
+        responses_lib.POST,
+        "https://places.googleapis.com/v1/places:searchNearby",
+        json=_nearby_response_payload(),
+        status=200,
+    )
+
+    client = PlacesAPIClient(api_key="test-key", usage_path=usage_file)
+    # Must not raise — disk failure is silent.
+    response = client.nearby_search(lat=35.6812, lon=139.7671, place_type="cafe")
+    assert len(response.results) == 2

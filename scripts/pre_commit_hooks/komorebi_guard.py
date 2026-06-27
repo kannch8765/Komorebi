@@ -39,16 +39,14 @@ from pathlib import Path
 # These should already be gitignored. The hook is belt-and-suspenders
 # against `git add -f` or copy-paste mistakes.
 #
-# Note on `.claude/`: the directory is intentionally NOT banned wholesale
-# anymore — `.claude/settings.json` (project-level Claude Code hook
-# config) is meant to be committed. The personal guide inside is
-# `.claude/CLAUDE.md`, which is gitignored AND specifically blocked here
-# as belt-and-suspenders. Per-machine overrides (`.claude/settings.local.json`)
-# are also blocked.
+# Note on `.claude/`: the entire directory is gitignored. The personal
+# CLAUDE.md guide, project-level hook config, and per-machine overrides
+# (`.claude/settings.local.json`) are all developer-local — never part
+# of the project deliverable. Blocking the whole directory here matches
+# the gitignore.
 
 BANNED_PATH_PATTERNS: tuple[str, ...] = (
-    r"^\.claude/CLAUDE\.md$",
-    r"^\.claude/settings\.local\.json$",
+    r"^\.claude/",
     r"^\.env(\..+)?$",
     r"^\.env$",
     r"^\.venv/",

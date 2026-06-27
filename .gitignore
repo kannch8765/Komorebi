@@ -24,8 +24,16 @@ ENV/
 # Project-specific: CLAUDE.md is local-only from this commit onwards
 CLAUDE.md
 
-# Claude Code PreToolUse hook: local-only, paired with .claude/settings.json
+# Claude Code hook config + scripts are local-only, never pushed.
+# Each developer wires their own .claude/settings.json for their machine.
+# The hook scripts are paired with that config; if one is local, both are.
+.claude/
 scripts/doc_check_hook.sh
+scripts/post_push_test.sh
+
+# Local API usage observability (Google Places API call counter).
+# Best-effort disk writes from tools/places_api.py land here.
+data/
 
 # IDE
 .vscode/
