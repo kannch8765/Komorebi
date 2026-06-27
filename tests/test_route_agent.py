@@ -44,7 +44,15 @@ def test_get_transit_routes_returns_dict_of_routes(mocker):
 
     assert "routes" in result
     assert len(result["routes"]) == 2
-    instance.get_routes.assert_called_once_with("渋谷", "池袋")
+    # The tool fn forwards to client.get_routes with keyword args so the
+    # new advanced options (via, trip_type, etc.) can be passed by name.
+    instance.get_routes.assert_called_once()
+    call = instance.get_routes.call_args
+    assert call.kwargs["origin"] == "渋谷"
+    assert call.kwargs["destination"] == "池袋"
+    assert call.kwargs["trip_type"] == "departure"  # default
+    assert call.kwargs["avoid_walk"] is False  # default
+    assert call.kwargs["via"] is None  # default
 
 
 def test_get_transit_routes_empty_routes(mocker):
@@ -73,7 +81,8 @@ def test_get_transit_routes_constructs_default_client():
         instance.get_routes.return_value.routes = []
         result = get_transit_routes("渋谷", "池袋")
         MockClient.assert_called_once()
-        instance.get_routes.assert_called_once_with("渋谷", "池袋")
+        # Keyword-arg call signature (see test above for the full check).
+        instance.get_routes.assert_called_once()
         assert result == {"routes": []}
 
 

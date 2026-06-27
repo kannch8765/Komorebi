@@ -180,3 +180,26 @@ Notable aliases:
 - `gemini-flash-lite-latest` — auto-rolling to newest stable (not reproducible)
 
 Don't use the `-latest` aliases in committed code; pin a specific version.
+
+---
+
+## 7. Transit API — REST vs MCP (2026-06-27)
+
+The same backend (`api.transit.ls8h.com`) exposes both:
+
+- **REST**: `https://api.transit.ls8h.com/api/v1/...` (what we use)
+- **MCP**: `https://api.transit.ls8h.com/mcp` (JSON-RPC 2.0, same backend)
+
+**We chose to stay on REST** because:
+1. No new dependency — `requests` already handles the JSON shape
+2. Same wire data — the MCP `plan_journey` response is byte-identical to `/api/v1/plan`
+3. ADK tool fns already prefer plain Python; the MCP transport would be a `requests.post(json={...})` with extra envelope wrapping
+
+The MCP server IS useful for **probing the schema** — `curl -X POST https://api.transit.ls8h.com/mcp -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' -H 'Content-Type: application/json'` gives you a clean tool inventory when the OpenAPI doc is too dense.
+
+For the full surface (all 6 endpoints, the `/plan` param gotchas, curl recipes) see `docs/transit-api.md`. The TL;DR gotchas:
+
+- `allowModes` / `avoidModes` are **comma-separated strings**, not array params
+- `avoidWalk` is the **string `"true"`/`"false"`**, not a Python bool
+- `via` is a **repeated query param** (`?via=A&via=B`), pass a Python list
+- `from` / `to` accept either `feedId:stopId` OR `geo:<lat>,<lon>` (lets `places_agent` skip name resolution)
