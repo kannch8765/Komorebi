@@ -7,45 +7,50 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agents.route_agent import get_transit_routes
+from models.schemas import RouteRecommendation
 from tools.transit_api import TransitAPIError, TransitAPIClient
 
 
-def _mock_client(routes: list[dict] | None = None, side_effect: Exception | None = None):
-    """Build a mock TransitAPIClient whose get_routes returns the given dict list."""
-    mock = MagicMock(spec=TransitAPIClient)
-    if side_effect is not None:
-        mock.get_routes.side_effect = side_effect
-    else:
-        mock_response = MagicMock()
-        mock_response.model_dump.return_value = {"routes": routes or []}
-        mock.get_routes.return_value = mock_response
-    return mock
+def _make_recommendations() -> list[RouteRecommendation]:
+    """Build a small list of valid RouteRecommendation objects for mocking."""
+    return [
+        RouteRecommendation(
+            name="ルートA",
+            duration_min=30,
+            transfers=1,
+            crowding_score=0.5,
+            extra_time_min=0,
+            stations=["渋谷", "新宿", "池袋"],
+            lines=["JR山手線", "丸ノ内線"],
+        ),
+        RouteRecommendation(
+            name="ルートB",
+            duration_min=20,
+            transfers=0,
+            crowding_score=0.3,
+            extra_time_min=0,
+            stations=["渋谷", "池袋"],
+            lines=["埼京線"],
+        ),
+    ]
 
 
 def test_get_transit_routes_returns_dict_of_routes(mocker):
-    routes = [
-        {
-            "name": "最短ルート",
-            "duration_min": 30,
-            "transfers": 1,
-            "crowding_score": 0.5,
-            "extra_time_min": 0,
-            "stations": ["渋谷", "新宿", "池袋"],
-            "lines": ["JR山手線", "丸ノ内線"],
-        }
-    ]
+    """The tool returns a dict with a 'routes' key containing RouteRecommendation dicts."""
     instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
-    instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": routes})
+    instance.get_routes.return_value.routes = _make_recommendations()
 
     result = get_transit_routes("渋谷", "池袋")
 
-    assert result == {"routes": routes}
+    assert "routes" in result
+    assert len(result["routes"]) == 2
     instance.get_routes.assert_called_once_with("渋谷", "池袋")
 
 
 def test_get_transit_routes_empty_routes(mocker):
+    """Empty input → empty output dict."""
     instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
-    instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": []})
+    instance.get_routes.return_value.routes = []
 
     result = get_transit_routes("渋谷", "池袋")
 
@@ -53,6 +58,7 @@ def test_get_transit_routes_empty_routes(mocker):
 
 
 def test_get_transit_routes_propagates_transit_api_error(mocker):
+    """A TransitAPIError from the client bubbles up unchanged."""
     instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
     instance.get_routes.side_effect = TransitAPIError("network error")
 
@@ -64,11 +70,54 @@ def test_get_transit_routes_constructs_default_client():
     """When called without a client, TransitAPIClient() is constructed internally."""
     with patch("agents.route_agent.TransitAPIClient") as MockClient:
         instance = MockClient.return_value
-        instance.get_routes.return_value = MagicMock(model_dump=lambda: {"routes": []})
+        instance.get_routes.return_value.routes = []
         result = get_transit_routes("渋谷", "池袋")
         MockClient.assert_called_once()
         instance.get_routes.assert_called_once_with("渋谷", "池袋")
         assert result == {"routes": []}
+
+
+def test_get_transit_routes_validates_exposure_comfort_range():
+    """exposure_comfort outside 1..5 raises ValueError."""
+    with pytest.raises(ValueError, match="exposure_comfort must be"):
+        get_transit_routes("渋谷", "池袋", exposure_comfort=0)
+    with pytest.raises(ValueError, match="exposure_comfort must be"):
+        get_transit_routes("渋谷", "池袋", exposure_comfort=6)
+
+
+def test_get_transit_routes_default_slider_is_balanced(mocker):
+    """Default exposure_comfort=3 keeps the API ordering for equal scores."""
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value.routes = _make_recommendations()
+
+    result = get_transit_routes("渋谷", "池袋")  # no slider → default 3
+
+    # With balanced weights and equal normalized time across both routes,
+    # the lower-crowding route (ルートB, 0.3) should come first.
+    assert result["routes"][0]["name"] == "ルートB"
+    assert result["routes"][1]["name"] == "ルートA"
+
+
+def test_get_transit_routes_slider_1_prefers_quiet(mocker):
+    """Slider=1 (avoid crowds) prefers the lower-crowding route even if slower."""
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value.routes = _make_recommendations()
+
+    result = get_transit_routes("渋谷", "池袋", exposure_comfort=1)
+
+    # ルートB (20min, 0.3 crowding) wins on crowding dominance.
+    assert result["routes"][0]["name"] == "ルートB"
+
+
+def test_get_transit_routes_slider_5_prefers_fast(mocker):
+    """Slider=5 (time-only) prefers the faster route even if more crowded."""
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value.routes = _make_recommendations()
+
+    result = get_transit_routes("渋谷", "池袋", exposure_comfort=5)
+
+    # ルートB is also faster (20 vs 30 min), so it wins on time dominance too.
+    assert result["routes"][0]["name"] == "ルートB"
 
 
 def test_create_route_agent_builds_agent_with_tool():
