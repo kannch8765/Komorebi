@@ -17,9 +17,9 @@ def test_create_coordinator_returns_agent_with_sub_agents():
     assert "gemini" in coordinator.model.lower()
     assert coordinator.instruction
 
+    # Coordinator V2 has THREE sub-agents (Module 11): route + weather + places.
     sub_agent_names = {a.name for a in coordinator.sub_agents}
-    assert "route_agent" in sub_agent_names
-    assert "weather_agent" in sub_agent_names
+    assert sub_agent_names == {"route_agent", "weather_agent", "places_agent"}
 
 
 def test_create_coordinator_custom_model_propagates_to_sub_agents():
@@ -34,7 +34,7 @@ def test_create_coordinator_custom_model_propagates_to_sub_agents():
 
 
 def test_create_coordinator_routing_rules_in_instruction():
-    """Instruction should mention the routing keywords to anchor sub-agent delegation."""
+    """Instruction should mention all 3 sub-agent names to anchor delegation."""
     pytest.importorskip("google.adk")
 
     from agents.coordinator import create_coordinator
@@ -43,6 +43,24 @@ def test_create_coordinator_routing_rules_in_instruction():
     instruction = coordinator.instruction
     assert "route_agent" in instruction
     assert "weather_agent" in instruction
+    assert "places_agent" in instruction
+
+
+def test_create_coordinator_v2_routing_keywords():
+    """V2 routing rules include places routing + slider keyword hints."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    # Places routing keywords
+    assert "FIND A PLACE" in instruction or "places_agent" in instruction
+    # Slider keyword hints (Japanese + English)
+    assert "人混み避けたい" in instruction
+    assert "急いでる" in instruction
+    assert "slider = 1" in instruction or "slider=1" in instruction
+    assert "slider = 5" in instruction or "slider=5" in instruction
 
 
 def test_create_coordinator_embeds_exposure_comfort_when_provided():
