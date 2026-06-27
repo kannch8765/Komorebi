@@ -24,6 +24,9 @@ ENV/
 # Project-specific: CLAUDE.md is local-only from this commit onwards
 CLAUDE.md
 
+# Claude Code PreToolUse hook: local-only, paired with .claude/settings.json
+scripts/doc_check_hook.sh
+
 # IDE
 .vscode/
 .idea/
