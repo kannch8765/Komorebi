@@ -21,6 +21,9 @@ ENV/
 .env.*
 !.env.example
 
+# Project-specific: CLAUDE.md is local-only from this commit onwards
+CLAUDE.md
+
 # IDE
 .vscode/
 .idea/
