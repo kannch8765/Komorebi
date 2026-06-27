@@ -9,6 +9,7 @@ See https://api.transit.ls8h.com/api/openapi.json for the full schema.
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 import requests
@@ -20,7 +21,6 @@ DEFAULT_BASE_URL = "https://api.transit.ls8h.com"
 DEFAULT_TIMEOUT = 30
 
 # Defaults for fields the API doesn't provide.
-_DEFAULT_CROWDING_SCORE = 0.5
 _DEFAULT_EXTRA_TIME_MIN = 0
 
 
@@ -70,6 +70,7 @@ class TransitAPIClient:
         origin: str,
         destination: str,
         num_itineraries: int = 3,
+        current_time: datetime | None = None,
     ) -> "RouteResponse":
         """Fetch journey options between two station names. Returns RouteResponse."""
         from_id = self.resolve_station_id(origin)
@@ -78,6 +79,7 @@ class TransitAPIClient:
             from_id=from_id,
             to_id=to_id,
             num_itineraries=num_itineraries,
+            current_time=current_time,
         )
 
     def get_routes_by_id(
@@ -85,6 +87,7 @@ class TransitAPIClient:
         from_id: str,
         to_id: str,
         num_itineraries: int = 3,
+        current_time: datetime | None = None,
     ) -> "RouteResponse":
         """Fetch journeys between two station IDs. Returns RouteResponse."""
         url = f"{self.base_url}/api/v1/plan"
@@ -107,7 +110,9 @@ class TransitAPIClient:
         if not isinstance(journeys, list):
             raise TransitAPIError("plan API returned 'journeys' field that is not a list")
 
-        return _build_route_response(journeys)
+        if current_time is None:
+            current_time = datetime.now()
+        return _build_route_response(journeys, current_time=current_time)
 
     def _get(self, url: str, *, params: dict, context: str) -> object:
         """Shared HTTP GET with consistent error handling."""
@@ -129,9 +134,18 @@ class TransitAPIClient:
             raise TransitAPIError(f"malformed JSON from {context}: {exc}") from exc
 
 
-def _build_route_response(journeys: list) -> "RouteResponse":
-    """Parse raw journey dicts into RouteResponse, filling missing optional fields."""
+def _build_route_response(
+    journeys: list,
+    current_time: datetime,
+) -> "RouteResponse":
+    """Parse raw journey dicts into RouteResponse, filling missing optional fields.
+
+    `current_time` is used by tools.crowding to compute a per-journey
+    crowding score based on time-of-day, line popularity, and transfer hub
+    congestion. The API itself does not expose occupancy data.
+    """
     from models.schemas import RouteRecommendation, RouteResponse
+    from tools.crowding import CrowdingFactors, score_route
 
     recommendations: list[RouteRecommendation] = []
     for i, raw in enumerate(journeys):
@@ -144,14 +158,14 @@ def _build_route_response(journeys: list) -> "RouteResponse":
         legs = raw.get("legs", [])
         stations: list[str] = []
         lines: list[str] = []
-        for i, leg in enumerate(legs):
+        for leg_i, leg in enumerate(legs):
             if not isinstance(leg, dict):
                 continue
             leg_from = leg.get("from")
             leg_to = leg.get("to")
             # First leg contributes its `from`; each leg contributes its `to`.
             # This avoids duplicating transfer stations (leg N's to == leg N+1's from).
-            if i == 0 and isinstance(leg_from, dict) and "name" in leg_from:
+            if leg_i == 0 and isinstance(leg_from, dict) and "name" in leg_from:
                 stations.append(leg_from["name"])
             if isinstance(leg_to, dict) and "name" in leg_to:
                 stations.append(leg_to["name"])
@@ -170,12 +184,23 @@ def _build_route_response(journeys: list) -> "RouteResponse":
         else:
             name = f"ルート {i + 1}"
 
+        # Compute crowding score from time-of-day + lines + transfer hubs.
+        # Transfer stations are all stations except origin + destination.
+        transfer_stations = tuple(stations[1:-1]) if len(stations) > 2 else ()
+        crowding_score = score_route(
+            CrowdingFactors(
+                time_of_day=current_time,
+                lines=tuple(lines),
+                transfer_stations=transfer_stations,
+            )
+        )
+
         recommendations.append(
             RouteRecommendation(
                 name=name,
                 duration_min=duration_min,
                 transfers=transfers,
-                crowding_score=_DEFAULT_CROWDING_SCORE,
+                crowding_score=crowding_score,
                 extra_time_min=_DEFAULT_EXTRA_TIME_MIN,
                 stations=stations,
                 lines=lines,

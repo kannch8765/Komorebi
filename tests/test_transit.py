@@ -127,7 +127,8 @@ def test_successful_route_fetch(mocker):
     assert route.name == "埼京線（大宮・川越方面）"  # synthesized from legs
     assert route.duration_min == 13  # 780 sec / 60, rounded
     assert route.transfers == 0
-    assert route.crowding_score == 0.5  # default
+    # crowding_score is now computed by tools.crowding (no longer placeholder 0.5)
+    assert 0.0 <= route.crowding_score <= 1.0
     assert route.extra_time_min == 0
     assert route.stations == ["渋谷", "池袋"]
     assert route.lines == ["埼京線（大宮・川越方面）"]
@@ -332,3 +333,36 @@ def test_resolve_station_id_breaks_weight_ties(mocker):
     client = TransitAPIClient()
     station_id = client.resolve_station_id("渋谷")
     assert station_id == "high-weight"
+
+
+def test_crowding_score_uses_injected_time(mocker):
+    """When current_time is provided, crowding reflects that time of day.
+
+    A Monday 08:00 + Yamanote + Shinjuku transfer (rush + busy line + tier-1
+    hub) should score notably higher than a Tuesday 03:00 same-route call.
+    """
+    from datetime import datetime
+
+    q = _MockQueue(mocker)
+    q.push(_shibuya_suggest_payload())
+    q.push(_ikebukuro_suggest_payload())
+    q.push(_saikyo_plan_payload())
+    q.patch()
+
+    client = TransitAPIClient()
+    rush = client.get_routes(
+        "渋谷", "池袋",
+        current_time=datetime(2026, 6, 22, 8, 0),  # Monday morning rush
+    )
+    q.push(_shibuya_suggest_payload())
+    q.push(_ikebukuro_suggest_payload())
+    q.push(_saikyo_plan_payload())
+    q.patch()
+
+    quiet = client.get_routes(
+        "渋谷", "池袋",
+        current_time=datetime(2026, 6, 23, 3, 0),  # Tuesday 3am
+    )
+
+    assert rush.routes[0].crowding_score > quiet.routes[0].crowding_score
+    assert rush.routes[0].crowding_score - quiet.routes[0].crowding_score >= 0.3
