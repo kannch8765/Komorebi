@@ -1,7 +1,7 @@
 # ADK Usage Reference
 
 Everything we learned (and tripped over) using Google ADK to build Komorebi.
-Last updated 2026-06-27 against `google-adk==2.3.0`.
+Last updated 2026-06-30 against `google-adk==2.3.0` (added §8 closure-bound preprocessor pattern).
 
 ---
 
@@ -163,6 +163,83 @@ You used `runner.run()`. The async loop is in a daemon thread; unhandled excepti
 
 **API key errors on a real key (`400 INVALID_ARGUMENT — API_KEY_INVALID`)**
 Make sure the env var is `GOOGLE_API_KEY`, not `GEMINI_API_KEY`. See section 1.
+
+---
+
+## 8. Closure-bound tool-layer preprocessors (V2.5)
+
+**The pattern.** When a tool fn needs per-user context (home label,
+account ID, tenant key) but ADK's schema-gen rule (§3) forbids
+non-primitive params, bind the context at factory time via a closure:
+
+```python
+# agents/route_agent.py
+def _get_transit_routes_impl(
+    origin: str, destination: str,
+    exposure_comfort: int = 3,
+    _home: str | None = None,    # <-- internal, NOT in the public signature
+) -> dict:
+    # Layer 3 of home resolution — deterministic keyword substitution
+    if _home is not None:
+        origin = _resolve_home_keyword(origin, _home)
+        destination = _resolve_home_keyword(destination, _home)
+    client = TransitAPIClient()
+    return client.get_routes(origin=origin, destination=destination, ...).model_dump()
+
+
+def create_route_agent(
+    model: str = "gemini-3.1-flash-lite",
+    home: "HomeLocation | None" = None,
+) -> "Agent":
+    from google.adk.agents import Agent
+    from google.adk.tools import FunctionTool
+
+    home_label = home.label if home is not None else None
+
+    def get_transit_routes(
+        origin: str, destination: str, exposure_comfort: int = 3,
+        via: list[str] | None = None,
+        # ... no _home param here
+    ) -> dict:
+        """Closure — same public signature, _home bound at factory time."""
+        return _get_transit_routes_impl(
+            origin=origin, destination=destination,
+            exposure_comfort=exposure_comfort, via=via,
+            _home=home_label,
+        )
+
+    return Agent(
+        name="route_agent", model=model,
+        instruction=("..." + home_agent_hint),
+        tools=[FunctionTool(get_transit_routes)],
+    )
+```
+
+**Why a closure, not a module-level global:**
+
+| Approach | Pros | Cons |
+|---|---|---|
+| `home_label` as module-level global set by `create_route_agent` | Simple | Tests can't run in parallel; ordering bugs; not thread-safe |
+| Pass `home` to the tool fn as a primitive param | Most explicit | LLM has to pass it on every call (error-prone), AND it appears in the tool schema (leaks user context to the LLM, which can echo it back) |
+| **Closure binding (this pattern)** ✅ | Hidden from the LLM, deterministic, testable | Requires a factory wrapper per tool fn |
+
+**Why the internal `_home` lives in `_get_transit_routes_impl` and not
+the closure:** keeps the impl testable as a plain function. Tests pass
+`_home='横浜駅'` directly to the impl; production callers go through
+the closure which has `_home=home_label` pre-bound.
+
+**When to reach for this pattern:**
+- Tool fn needs user/account/tenant context
+- The context is stable for the lifetime of one Agent (not per-call)
+- The context is sensitive enough that you don't want it in the LLM-visible schema
+- You have a deterministic pre-processing step that should fire even if
+  the LLM "forgets" to call the tool correctly
+
+**Our home-resolution pipeline** uses three layers (Coordinator
+instruction + sub-agent instruction + this closure preprocessor).
+Layers 1 + 2 are LLM-mediated and best-effort; layer 3 is the only
+deterministic fallback. See `docs/architecture.md` §4a and
+`docs/module-status.md` §8 for the full picture.
 
 ---
 

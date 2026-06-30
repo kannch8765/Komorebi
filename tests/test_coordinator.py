@@ -91,3 +91,112 @@ def test_create_coordinator_default_slider_when_no_preferences():
     assert "exposure_comfort slider = 3" in instruction
     assert "weight_crowding=0.50" in instruction
     assert "weight_time=0.50" in instruction
+
+
+# ---------------------------------------------------------------------------
+# Home location wiring (V2.5 personal context)
+# ---------------------------------------------------------------------------
+
+
+def test_create_coordinator_no_home_when_not_provided():
+    """When home=None, no home hint is injected into the instruction."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    assert "HARD RULE — home resolution" not in instruction
+    assert "The user's home is" not in instruction
+
+
+def test_create_coordinator_embeds_home_when_provided():
+    """When home is passed, the label + coords appear in the instruction."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    coordinator = create_coordinator(home=home)
+    instruction = coordinator.instruction
+    assert "The user's home is 横浜駅" in instruction
+    assert "lat=35.4657" in instruction
+    assert "lon=139.6223" in instruction
+
+
+def test_create_coordinator_home_hint_mentions_resolution_keywords():
+    """Home hint should list the keywords the LLM should resolve to home."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    coordinator = create_coordinator(home=home)
+    instruction = coordinator.instruction
+    # Each of these Japanese/English keywords should appear in the hint
+    for keyword in ("家", "自宅", "home"):
+        assert keyword in instruction, f"home hint missing keyword {keyword!r}"
+
+
+def test_create_coordinator_home_hint_gives_resolution_examples():
+    """Home hint should give concrete examples of how to resolve '家' queries."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    coordinator = create_coordinator(home=home)
+    instruction = coordinator.instruction
+    # Routing example: '家から池袋' → origin=横浜駅
+    assert "origin='横浜駅'" in instruction
+    # Places example: use literal lat/lon
+    assert "lat=35.4657" in instruction and "lon=139.6223" in instruction
+    assert "places_agent" in instruction
+
+
+def test_create_coordinator_home_hint_is_imperative():
+    """V2.5: the home hint uses MUST / DO NOT to make intent unambiguous."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    coordinator = create_coordinator(home=home)
+    instruction = coordinator.instruction
+    assert "MUST" in instruction
+    assert "DO NOT" in instruction
+
+
+def test_create_coordinator_home_and_preferences_combine():
+    """home + preferences should both appear in the instruction."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_preferences import UserPreferences
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    prefs = UserPreferences(exposure_comfort=2)
+    coordinator = create_coordinator(preferences=prefs, home=home)
+    instruction = coordinator.instruction
+    # Both pieces are present
+    assert "The user's home is 横浜駅" in instruction
+    assert "exposure_comfort slider = 2" in instruction
+    assert "weight_crowding=0.68" in instruction
+
+
+def test_create_coordinator_sub_agents_unaffected_by_home():
+    """home parameter must not change which sub-agents are wired up."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    coordinator = create_coordinator(home=home)
+    sub_agent_names = {a.name for a in coordinator.sub_agents}
+    assert sub_agent_names == {"route_agent", "weather_agent", "places_agent"}

@@ -23,11 +23,13 @@ if TYPE_CHECKING:
     from google.adk.agents import Agent
 
     from models.user_preferences import UserPreferences
+    from models.user_profile import HomeLocation
 
 
 def create_coordinator(
     model: str = "gemini-3.1-flash-lite",
     preferences: "UserPreferences | None" = None,
+    home: "HomeLocation | None" = None,
 ) -> "Agent":
     """Build Coordinator V2 with Route + Weather + Places sub-agents.
 
@@ -39,6 +41,12 @@ def create_coordinator(
                      `exposure_comfort` to get_transit_routes. If None,
                      defaults to balanced (slider=3) and the LLM will ask
                      the user if they want to set it.
+        home:        User's saved home location (label, lat, lon). If
+                     provided, a hint is injected into the instruction so
+                     the LLM resolves '家' / '自宅' / 'home' / '家の近く' to
+                     this location when delegating to sub-agents. If None,
+                     no home hint is added — the LLM will ask the user to
+                     specify a station.
     """
     from google.adk.agents import Agent
 
@@ -50,9 +58,9 @@ def create_coordinator(
     if preferences is None:
         preferences = UserPreferences.default()
 
-    route_agent = create_route_agent(model=model)
-    weather_agent = create_weather_agent(model=model)
-    places_agent = create_places_agent(model=model)
+    route_agent = create_route_agent(model=model, home=home)
+    weather_agent = create_weather_agent(model=model, home=home)
+    places_agent = create_places_agent(model=model, home=home)
 
     slider = preferences.exposure_comfort
     slider_hint = (
@@ -64,6 +72,30 @@ def create_coordinator(
         "preference in the query (e.g. '人混み避けたい' = slider 1, '急いでる' = "
         "slider 5), use that value instead of the default."
     )
+
+    if home is not None:
+        home_hint = (
+            f"\n\nHARD RULE — home resolution:\n"
+            f"The user's home is {home.label} "
+            f"(lat={home.lat}, lon={home.lon}).\n"
+            f"When the user's query contains '家' / '自宅' / 'home' / 'うちの近く' "
+            f"or any home-reference, you MUST resolve it to the literal values "
+            f"above BEFORE delegating to any sub-agent.\n"
+            f"- For route_agent: pass origin='{home.label}' (NOT '家'/'自宅'/'home' — "
+            f"the transit API will reject those).\n"
+            f"- For places_agent: pass lat={home.lat}, lon={home.lon} (NOT '家' as "
+            f"a string).\n"
+            f"Examples:\n"
+            f"- '家から池袋へ' → route_agent(origin='{home.label}', destination='池袋')\n"
+            f"- '家の近くでゆっくりできる場所' → places_agent(lat={home.lat}, "
+            f"lon={home.lon}, place_type='cafe' or 'park')\n"
+            f"DO NOT pass the strings '家' / '自宅' / 'home' as station names or "
+            f"as coordinates — both APIs will reject them. The route_agent has a "
+            f"backup safety net for keyword substitution, but you should NOT rely "
+            f"on it — always pre-resolve home references in your delegation message."
+        )
+    else:
+        home_hint = ""
 
     return Agent(
         name="coordinator",
@@ -87,6 +119,7 @@ def create_coordinator(
             "  - '急いでる' / '急いで' / 'hurry' / 'asap' / 'fastest' → slider = 5\n\n"
             "Respond in Japanese. Be concise and friendly."
             + slider_hint
+            + home_hint
         ),
         sub_agents=[route_agent, weather_agent, places_agent],
     )

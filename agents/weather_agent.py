@@ -35,8 +35,17 @@ def get_current_weather(
     return response.model_dump()
 
 
-def create_weather_agent(model: str = "gemini-3.1-flash-lite") -> "Agent":
-    """Build the Weather Agent. Requires google-adk + a valid Gemini API key."""
+def create_weather_agent(
+    model: str = "gemini-3.1-flash-lite",
+    home=None,  # accepted for API symmetry with create_route_agent; unused
+) -> "Agent":
+    """Build the Weather Agent. Requires google-adk + a valid Gemini API key.
+
+    Args:
+        model: LLM model name.
+        home:  Accepted for symmetry with `create_route_agent`. Currently
+               unused — weather is always reported for Tokyo coords.
+    """
     from google.adk.agents import Agent
     from google.adk.tools import FunctionTool
 

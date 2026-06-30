@@ -75,6 +75,46 @@
 
 ---
 
+## V2.5 Tasks (Personal Context)
+
+### Module 15: UserProfile + Home Resolution + REPL Slash Commands
+- **Purpose**: Let the user save their home station once (label + lat/lon)
+  and have the agent resolve home keywords (`家`, `自宅`, `home`, `現在地`,
+  `出発地`, etc.) automatically across turns. Goal: "家から池袋へ" works
+  without the user re-typing their origin.
+- **Files**:
+  - `models/user_profile.py` — `HomeLocation` (frozen dataclass) +
+    `UserProfile` (load/save via atomic JSON write, schema versioning)
+  - `agents/route_agent.py` — tool-layer preprocessor that resolves home
+    keywords via closure-bound `_home` param (safety net for the
+    Coordinator's instruction-based resolution)
+  - `agents/coordinator.py` — imperative "HARD RULE" home hint + wires
+    `home=home` to all sub-agent factories
+  - `agents/places_agent.py` / `agents/weather_agent.py` — accept `home=None`
+    for API symmetry (unused for now)
+  - `main.py` — first-run home prompt + `/home`, `/forget-home`, `/help`
+    slash commands + coordinator rebuild on mid-session home change
+  - `data/user_profile.json` — runtime-only, **gitignored** (PII)
+  - `tests/test_user_profile.py` (47 tests) + extensions to
+    `test_route_agent.py`, `test_coordinator.py`, `test_main.py`
+- **Dependencies**: Module 6 (Coordinator MVP), Module 4 (Route Agent)
+- **Acceptance**:
+  - `uv run pytest` → 249 passing
+  - End-to-end: `/home 横浜駅` → `> 家から池袋へ` returns a real route
+    from `横浜駅` (not the literal string `家`)
+  - Without a saved home, the Coordinator politely asks the user for
+    their nearest station instead of crashing
+- **Three-layer defense** for keyword resolution (in priority order):
+  1. Coordinator instruction tells the LLM to pre-resolve home keywords
+     to literal coords BEFORE delegating
+  2. Each sub-agent's instruction reiterates the resolution rule for its
+     own delegation context
+  3. The tool fn itself substitutes keywords at call time via the
+     closure-bound `_home` label — catches everything that slips through
+- **Status**: Done (2026-06-30). 47 + 19 + 13 + 24 = 103 new tests.
+
+---
+
 ## V3 Tasks (Polish)
 
 ### Module 12: BigQuery Integration
@@ -95,10 +135,16 @@
 
 | Module | Assignee | Status |
 |--------|----------|--------|
-| 1 | M3 (WSL) | Not started |
-| 2 | M3 (WSL) | Not started |
-| 3 | M3 (WSL) | Not started |
-| 4 | M3 (WSL) | Not started |
-| 5 | M3 (WSL) | Not started |
-| 6 | M3 (WSL) | Not started |
-| 7-14 | TBD | Not started |
+| 1 | M3 (WSL) | Done |
+| 2 | M3 (WSL) | Done |
+| 3 | M3 (WSL) | Done |
+| 4 | M3 (WSL) | Done |
+| 5 | M3 (WSL) | Done |
+| 6 | M3 (WSL) | Done (superseded by 11) |
+| 7 | M3 (WSL) | Done |
+| 8 | M3 (WSL) | Done |
+| 9 | M3 (WSL) | Done |
+| 10 | M3 (WSL) | Done |
+| 11 | M3 (WSL) | Done |
+| 12-14 | TBD | Not scheduled |
+| 15 (V2.5) | M3 (WSL) | Done |

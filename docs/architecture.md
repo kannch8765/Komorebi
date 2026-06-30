@@ -4,7 +4,9 @@ Single-page architecture overview. For deeper references see
 `docs/adk-usage.md` (ADK patterns), `docs/transit-api.md` (transit endpoints
 + gotchas), and the per-tool client docstrings.
 
-Last updated 2026-06-27.
+Last updated 2026-06-30 (added V2.5 personal-context flow, Models table row,
+Entry points row, Persistence row, Files layout, design-decision entry,
+home-context flow section).
 
 ---
 
@@ -60,12 +62,13 @@ crowding scores are computed locally by a deterministic heuristic in
 | Model | `PlaceSearchResponse` / `PlaceSearchResult` / `LatLng` | Google Places Nearby Search result list | `models/schemas.py` |
 | Model | `PlaceRecommendation` / `PlaceResponse` | V1-style recommendation shape (unused by L2 Places agent) | `models/schemas.py` |
 | Model | `UserPreferences` | `exposure_comfort` slider 1..5, mapped to `weight_crowding` / `weight_time` | `models/user_preferences.py` |
+| Model | `UserProfile` / `HomeLocation` (V2.5) | Persisted home station (label + lat/lon), schema-versioned, atomic JSON write | `models/user_profile.py` |
 
 ### Entry points
 
 | Layer | Component | Purpose | File |
 |---|---|---|---|
-| Entry | `main.py` | Interactive REPL — `InMemoryRunner` + async streaming, `exit`/`quit` to leave | `main.py` |
+| Entry | `main.py` | Interactive REPL — `InMemoryRunner` + async streaming, `exit`/`quit`/`/home`/`/forget-home`/`/help` | `main.py` |
 | Entry | `scripts/demo_headless.py` | No-LLM demo driver — calls tool fns directly to verify the data path | `scripts/demo_headless.py` |
 
 ### External APIs
@@ -75,6 +78,16 @@ crowding scores are computed locally by a deterministic heuristic in
 | Transit planner | `https://api.transit.ls8h.com` | None (public) | 6 REST endpoints; no crowding/occupancy data; MCP variant at `/mcp` |
 | Weather (OpenMeteo) | `https://api.open-meteo.com/v1/forecast` | None | Free, no key, Tokyo coords 35.6762 / 139.6503 |
 | Google Places (New) | `https://places.googleapis.com/v1` | `X-Goog-Api-Key` header | FieldMask controls per-request cost |
+
+### Persistence — V2.5
+
+| Layer | Component | Purpose | File |
+|---|---|---|---|
+| Storage | `UserProfile` JSON | Saved home station + future profile fields, atomic write, schema-versioned | `data/user_profile.json` (gitignored) |
+
+The profile is loaded once on REPL start (or after a `/home` update) and
+passed into `create_coordinator(home=...)` so the home context is
+threaded into every agent in the hierarchy.
 
 ---
 
@@ -144,6 +157,62 @@ coordinator (gemini-3.1-flash-lite)
 `create_coordinator()`; ADK handles LLM-driven delegation. Each sub-agent
 has a single `FunctionTool` whose signature uses **primitive types only**
 (ADK schema-gen constraint — see `docs/adk-usage.md`).
+
+---
+
+## 4a. Home context flow (V2.5)
+
+When the user has a saved home (`/home 横浜駅` etc.), the query
+"家から池袋へ" goes through a three-layer resolution pipeline before
+hitting the transit API:
+
+```
+User: "家から池袋へ"
+   |
+   v
+main.py: REPL turns text into Content; InMemoryRunner.run_async()
+   |
+   v
+Coordinator LLM (Gemini) reads its instruction
+   |
+   +-- Layer 1 (primary): Coordinator's "HARD RULE" home hint tells the
+   |   LLM to resolve home keywords BEFORE delegating. If the LLM obeys,
+   |   it passes origin='横浜駅' directly to route_agent.
+   |
+   +-- Layer 2 (redundant): route_agent's own instruction reiterates
+   |   the resolution rule for its delegation context.
+   |
+   +-- Layer 3 (safety net): the tool fn closure has `_home` bound at
+   |   factory time. If the LLM ignores layers 1 + 2 and still passes
+   |   '家'/'自宅'/'home'/'現在地'/'出発地' etc., the keyword is replaced
+   |   with the saved label just before the transit API call.
+   |
+   v
+TransitAPIClient.get_routes(origin='横浜駅', destination='池袋')
+   |
+   v
+RouteResponse (pydantic) -> rank_routes() -> Japanese synthesis
+```
+
+**Keyword list (kept in `agents/route_agent.py:_HOME_KEYWORDS`):**
+`家`, `自宅`, `home`, `うち`, `現在地`, `出発地`, `出発地点`, `出発`,
+`自分の場所`, `私の場所`, `current location`, `departure`, `from here`.
+Keyword list lives in one place — extend it there if you add new
+home-reference patterns.
+
+**Failure modes** the three-layer design defends against:
+1. LLM ignores Coordinator's instruction and picks its own synonym
+   (we observed this with '自宅' and '現在地' in early testing).
+2. LLM delegates to sub-agent with the raw keyword as origin/destination.
+3. The transit API rejects non-station names (it returns
+   "station not found").
+
+The closure-bound `_home` parameter is the **only** mechanism that fires
+deterministically — the other two are LLM-mediated. See the
+"Closure-bound tool-layer preprocessors" section in `docs/adk-usage.md`
+for the reusable ADK pattern.
+
+---
 
 ---
 
@@ -248,6 +317,15 @@ and lets `tools/` and `models/` be unit-tested in isolation.
   and prints `event.content.parts[*].text` as events arrive, so the user
   sees Japanese tokens appear incrementally rather than waiting for the
   full response.
+- **Closure-bound tool-layer preprocessor (V2.5).** When a sub-agent's tool
+  fn needs per-user context (home label, in our case) but ADK's schema-gen
+  rule forbids non-primitive params, we bind the context at factory time
+  via a closure. `create_route_agent(home=...)` returns an `Agent` whose
+  `FunctionTool(get_transit_routes)` closure captures `_home=home.label`
+  and substitutes home keywords before the API call. The LLM never sees
+  this parameter — it only sees the primitive public signature. This is
+  the only deterministic layer in the home-resolution pipeline; see
+  `docs/adk-usage.md` §8 for the full pattern.
 
 ---
 
@@ -255,11 +333,11 @@ and lets `tools/` and `models/` be unit-tested in isolation.
 
 ```
 komorebi/
-|-- main.py                       # REPL entry point
+|-- main.py                       # REPL entry point + /home slash commands
 |-- pyproject.toml                # uv-managed deps (google-adk>=2.3, pydantic, requests)
 |-- uv.lock
 |-- CLAUDE.md                     # developer guide (probes, env, refs)
-|-- PLAN.md                       # module task list
+|-- PLAN.md                       # module task list (V1 → V2 → V2.5 → V3)
 |-- .env                          # gitignored — GOOGLE_PLACES_API_KEY, GOOGLE_API_KEY
 |
 |-- agents/                       # ADK Agent definitions + tool fns
@@ -276,7 +354,10 @@ komorebi/
 |
 |-- models/                       # Pydantic v2 schemas
 |   |-- schemas.py                # Route, Weather, Place inter-agent shapes
-|   `-- user_preferences.py       # exposure_comfort slider
+|   |-- user_preferences.py       # exposure_comfort slider
+|   `-- user_profile.py           # V2.5 — HomeLocation + UserProfile
+|
+|-- data/                         # gitignored — user_profile.json (PII)
 |
 |-- config/
 |   `-- settings.py
@@ -290,5 +371,7 @@ komorebi/
 `-- docs/
     |-- architecture.md           # this file
     |-- adk-usage.md              # ADK gotchas + patterns
-    `-- transit-api.md            # full transit REST reference
+    |-- module-status.md          # module-by-module status
+    |-- transit-api.md            # full transit REST reference
+    `-- problem-statement.md      # the "why"
 ```

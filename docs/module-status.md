@@ -1,7 +1,7 @@
 # Komorebi — Module Status
 
 Canonical source of truth for "what's built, what's not, what's the state of each
-module." Last updated 2026-06-27 against `google-adk==2.3.0` on commit `9accb82`.
+module." Last updated 2026-06-30 against `google-adk==2.3.0` (V2.5 personal context shipped).
 
 If something here disagrees with the actual code or with `PLAN.md`, the code
 wins — please update this file in the same PR that changes the state.
@@ -37,6 +37,7 @@ wins — please update this file in the same PR that changes the state.
 | 12 | BigQuery Integration | not started | `tools/bigquery.py` (planned) | — | Analytics on route/crowding queries. |
 | 13 | Dashboard | not started | TBD (planned) | — | Looker or web dashboard for crowding trends. |
 | 14 | Cloud Run Deployment | not started | `Dockerfile`, `cloudbuild.yaml` (planned) | — | Container + Cloud Build pipeline. |
+| 15 | UserProfile + Home Resolution (V2.5) | done | `models/user_profile.py`, `agents/route_agent.py`, `agents/coordinator.py`, `main.py` | `tests/test_user_profile.py` (47) + `test_route_agent.py` (19) + `test_coordinator.py` (13) + `test_main.py` (24) | Three-layer home-keyword resolution (Coordinator instruction + sub-agent instruction + closure-bound tool preprocessor). REPL slash commands: `/home`, `/forget-home`, `/help`. `data/user_profile.json` is gitignored (PII). See §8. |
 
 ---
 
@@ -93,6 +94,19 @@ in `[0.85, 0.15]`. Routes are ranked by
 the Places sub-agent in and inject the `exposure_comfort` slider into the
 delegation instruction. Also rebuilt the runner for async ADK 2.3 and
 swapped to `gemini-3.1-flash-lite` (`648f473`).
+
+**Module 15 — V2.5 Personal Context** (`<pending — see §8>`). Adds
+`models/user_profile.py` (frozen `HomeLocation` dataclass + `UserProfile`
+JSON persistence with atomic write via `tmp + os.replace`,
+`SCHEMA_VERSION = 1`). `agents/route_agent.py` gains a closure-bound
+`_home` param on the tool fn and an 11-entry keyword list
+(`家`/`自宅`/`home`/`うち`/`現在地`/`出発地`/`出発地点`/`出発`/`自分の場所`/
+`私の場所` + English synonyms). `agents/coordinator.py` injects a
+"HARD RULE" home hint with literal lat/lon + examples + "DO NOT"
+warnings, and threads `home=home` into all sub-agent factories.
+`main.py` adds a first-run home prompt and `/home`, `/forget-home`,
+`/help` slash commands; the Coordinator is rebuilt on mid-session home
+change so the LLM picks up the new hint without a restart.
 
 ---
 
@@ -163,15 +177,84 @@ locally via `main.py` is fine for development.
   `UserWarning: [EXPERIMENTAL] feature FeatureName.JSON_SCHEMA_FOR_FUNC_DECL`.
   This is informational, not blocking — ADK is using an experimental
   Pydantic codepath to build tool schemas. See `docs/adk-usage.md` §2.
+- **Only `home` is persisted (V2.5).** The first cut of `UserProfile`
+  only stores `home: HomeLocation | None`. Work (`work: HomeLocation | None`),
+  default exposure-comfort slider (`default_slider: int | None`),
+  mobility preferences (`avoid_walk: bool | None`), and other
+  PII-carrying fields are deliberately NOT in the schema yet — extend
+  `UserProfile` + bump `SCHEMA_VERSION` when adding them, and remember
+  `data/user_profile.json` is gitignored (real user data must not
+  enter the repo).
+- **The 527-min Yokohama→Ikebukuro mystery.** In the V2.5 end-to-end
+  live test the transit API returned a route time of ~527 min for a
+  trip that's normally ~30 min. Likely the ranking picked an outlier
+  itinerary (multiple transfers, walking legs). The home-resolution
+  feature works correctly; the route-quality issue is a separate
+  diagnostic. Suspected cause: the `/plan` endpoint's `via` / mode
+  filtering isn't engaged when no constraints are given, so the first
+  route can be unusual. Worth a `tools/transit_api.py` audit when we
+  revisit route quality.
+
+---
+
+## 8. Personal context (Module 15, V2.5)
+
+The motivation: a Tokyo outing assistant that asks "where are you
+starting from?" on every turn is annoying. V2.5 lets the user save
+their home once (label + lat/lon) and have the agent resolve home
+keywords automatically.
+
+**User flow:**
+1. First REPL run → "ご自宅の最寄り駅を「駅名」の形式で入力してください" → user types `横浜駅`
+2. `data/user_profile.json` written with `{version: 1, home: {label, lat, lon}}` (gitignored)
+3. Subsequent queries containing `家`/`自宅`/`home`/`現在地`/`出発地`/... are
+   resolved to the saved label before the transit API call
+
+**Three-layer resolution pipeline** (each layer is a fallback for the
+one above; see `docs/architecture.md` §4a for the data-flow diagram):
+
+| Layer | Where | When it fires |
+|---|---|---|
+| 1. Coordinator instruction | `agents/coordinator.py` `home_hint` | LLM-driven; can be ignored by Gemini |
+| 2. Sub-agent instruction | `agents/route_agent.py` `home_agent_hint` | LLM-driven; redundant with layer 1 |
+| 3. Tool-fn closure preprocessor | `agents/route_agent.py` `_resolve_home_keyword` | Deterministic — fires on every call |
+
+**Why three layers?** In early V2.5 testing we observed the Coordinator's
+LLM picking its own synonyms (`自宅`, `現在地`) instead of the literal
+station name the instruction told it to use. Layers 1+2 are best-effort
+LLM nudges; only layer 3 fires deterministically. The full keyword
+list lives at `agents/route_agent.py:_HOME_KEYWORDS` — extend it
+there when adding new home-reference patterns.
+
+**Test coverage** (103 new tests):
+- 47 in `tests/test_user_profile.py` — HomeLocation validation,
+  UserProfile load/save atomicity, missing file, corrupt JSON, version
+  mismatch, `with_home()` / `clear_home()` builders
+- 19 in `tests/test_route_agent.py` — keyword substitution, closure
+  binding, behavior when `home=None`
+- 13 in `tests/test_coordinator.py` — home_hint injection + delegation
+  to sub-agents with `home=home`
+- 24 in `tests/test_main.py` — `_resolve_station()` suffix stripping,
+  `_prompt_home()` / `_handle_slash_command()` dispatch, profile
+  load/save in `main.py`
+
+**REPL slash commands:**
+- `/home` — set or change the saved home (prompts for station name,
+  geocodes via the hardcoded `TOKYO_COORDS` table)
+- `/forget-home` — clear the saved home (subsequent queries will ask
+  the user for their nearest station instead)
+- `/help` — show slash command list
+- `/home <station>` — inline form (skips the interactive prompt)
 
 ---
 
 ## 7. Test counts
 
-- **147 tests** across **12 files** (`tests/test_coordinator.py`,
+- **249 tests** across **13 files** (`tests/test_coordinator.py`,
   `test_crowding.py`, `test_main.py`, `test_places.py`, `test_places_agent.py`,
   `test_route_agent.py`, `test_transit.py`, `test_user_preferences.py`,
-  `test_weather.py`, `test_weather_agent.py`, plus `__init__.py`).
+  `test_user_profile.py` *(V2.5)*, `test_weather.py`, `test_weather_agent.py`,
+  plus `__init__.py`).
 - Full-suite runtime is **~2.1s** on a warm cache (collection alone is
   ~0.24s).
 - Run with `uv run pytest` from the repo root.

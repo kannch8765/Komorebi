@@ -99,8 +99,20 @@ def search_places(
     return response.model_dump()
 
 
-def create_places_agent(model: str = "gemini-3.1-flash-lite") -> "Agent":
-    """Build the Places Agent. Requires google-adk + a valid GOOGLE_PLACES_API_KEY."""
+def create_places_agent(
+    model: str = "gemini-3.1-flash-lite",
+    home=None,  # accepted for API symmetry with create_route_agent; unused
+) -> "Agent":
+    """Build the Places Agent. Requires google-adk + a valid GOOGLE_PLACES_API_KEY.
+
+    Args:
+        model: LLM model name.
+        home:  Accepted for symmetry with `create_route_agent`. Currently
+               unused — the Coordinator's instruction is responsible for
+               pre-resolving '家' keywords to literal lat/lon before
+               delegating to this agent. (Future: could bind a tool-layer
+               preprocessor similar to route_agent's home resolution.)
+    """
     from google.adk.agents import Agent
     from google.adk.tools import FunctionTool
 

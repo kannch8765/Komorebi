@@ -155,3 +155,170 @@ def test_create_route_agent_custom_model():
 
     agent = create_route_agent(model="gemini-2.5-pro")
     assert agent.model == "gemini-2.5-pro"
+
+
+# ---------------------------------------------------------------------------
+# V2.5: home keyword resolution
+# ---------------------------------------------------------------------------
+
+
+from agents.route_agent import _resolve_home_keyword  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    "input_text,expected",
+    [
+        ("家", "横浜駅"),
+        ("自宅", "横浜駅"),
+        ("home", "横浜駅"),
+        ("うち", "横浜駅"),
+        ("家から", "横浜駅から"),
+        ("家へ", "横浜駅へ"),
+        ("自宅 → 池袋", "横浜駅 → 池袋"),
+        ("池袋", "池袋"),  # not a keyword — unchanged
+        ("", ""),  # empty — unchanged
+    ],
+)
+def test_resolve_home_keyword_replaces_keywords(input_text, expected):
+    """Standard home keywords are replaced with the home label."""
+    assert _resolve_home_keyword(input_text, "横浜駅") == expected
+
+
+@pytest.mark.parametrize(
+    "input_text,expected",
+    [
+        # We accept that substrings ARE replaced. In a station-name context
+        # this is essentially never a problem; the risk is '家族' → '横浜駅族'
+        # which would only matter if a station were named '家族...'. This is
+        # documented in the function docstring.
+        ("家族", "横浜駅族"),
+        ("homecoming", "横浜駅coming"),
+        ("池袋", "池袋"),  # not a keyword at all
+        ("帰宅", "帰宅"),  # '宅' is not the same char as '家' — unchanged
+    ],
+)
+def test_resolve_home_keyword_accepts_substring_matches(input_text, expected):
+    """Substring matches ARE replaced (documented behaviour)."""
+    assert _resolve_home_keyword(input_text, "横浜駅") == expected
+
+
+def test_get_transit_routes_resolves_home_in_origin(mocker):
+    """When _home is set, '自宅' in origin is replaced with home label."""
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    get_transit_routes(
+        origin="自宅",
+        destination="池袋",
+        _home="横浜駅",
+    )
+    # Inspect the call args to confirm origin was rewritten
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["origin"] == "横浜駅"
+    assert call.kwargs["destination"] == "池袋"
+
+
+def test_get_transit_routes_resolves_home_in_destination(mocker):
+    """When _home is set, keywords in destination are also replaced."""
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    get_transit_routes(
+        origin="渋谷",
+        destination="家",
+        _home="横浜駅",
+    )
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["origin"] == "渋谷"
+    assert call.kwargs["destination"] == "横浜駅"
+
+
+def test_get_transit_routes_resolves_home_in_via(mocker):
+    """When _home is set, keywords in via list are replaced per-element."""
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    get_transit_routes(
+        origin="渋谷",
+        destination="池袋",
+        via=["家", "新宿"],
+        _home="横浜駅",
+    )
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["via"] == ["横浜駅", "新宿"]
+
+
+def test_get_transit_routes_no_resolution_when_home_unset(mocker):
+    """When _home is None (default), keywords are passed through unchanged."""
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    get_transit_routes(origin="自宅", destination="池袋")
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["origin"] == "自宅"  # unchanged
+    assert call.kwargs["destination"] == "池袋"
+
+
+# ---------------------------------------------------------------------------
+# create_route_agent(home=...) closure wiring
+# ---------------------------------------------------------------------------
+
+
+def test_create_route_agent_home_is_bound_in_tool(mocker):
+    """create_route_agent(home=...) wires the home label into the tool closure."""
+    pytest.importorskip("google.adk")
+
+    from agents.route_agent import create_route_agent
+    from models.user_profile import HomeLocation
+
+    home = HomeLocation(label="横浜駅", lat=35.4657, lon=139.6223)
+    agent = create_route_agent(home=home)
+
+    # Get the underlying callable from FunctionTool
+    tool = agent.tools[0]
+    func = getattr(tool, "func", None)
+    assert func is not None, "FunctionTool.func missing"
+
+    # Mock the transit client and call the closure
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    func(origin="自宅", destination="池袋")
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["origin"] == "横浜駅"
+
+
+def test_create_route_agent_no_home_does_not_bind(mocker):
+    """create_route_agent() (no home) leaves the closure's _home unbound."""
+    pytest.importorskip("google.adk")
+
+    from agents.route_agent import create_route_agent
+
+    agent = create_route_agent()  # no home
+    tool = agent.tools[0]
+    func = getattr(tool, "func", None)
+
+    mock_response = MagicMock()
+    mock_response.routes = _make_recommendations()
+    mocker.patch.object(
+        TransitAPIClient, "get_routes", return_value=mock_response
+    )
+
+    func(origin="自宅", destination="池袋")
+    call = TransitAPIClient.get_routes.call_args
+    assert call.kwargs["origin"] == "自宅"  # unchanged — no home bound

@@ -13,6 +13,7 @@ planner at [api.transit.ls8h.com](https://api.transit.ls8h.com).
 - **Multi-agent LLM orchestration** — Coordinator (L1) routes to Route, Weather, and Places sub-agents (L2), each owning one external API.
 - **Crowding-aware route ranking** — local algorithm in `tools/crowding.py` synthesizes a `crowding_score` from time-of-day, line popularity, and transfer-hub tier (the transit API doesn't expose occupancy directly).
 - **User-tunable exposure slider** — preference 1–5 trades off quietness vs. speed at synthesis time.
+- **Personal context (V2.5)** — the REPL saves your home station (label + lat/lon) to `data/user_profile.json`. When you say "家から池袋へ" or "家の近くでカフェ", the Coordinator resolves the home keyword to your saved station automatically — no need to retype your origin every turn. Slash commands: `/home` (set/change), `/forget-home` (clear), `/help`.
 - **Real data, no mocks** — transit from `api.transit.ls8h.com` (GTFS / ODPT), weather from OpenMeteo (no key), places from Google Places API (New) with `X-Goog-FieldMask` cost control.
 - **Pure Python, no Docker** — `uv`-managed deps, ADK `InMemoryRunner` for the REPL, pytest for tests. No cloud lock-in.
 
@@ -39,18 +40,29 @@ uv run python main.py
 Session:
 
 ```
-> 渋谷で静かなカフェを教えて
-渋谷エリアでおすすめのカフェをいくつかご紹介します。
-1. WHITE GLASS COFFEE — 渋谷区桜丘町, 営業中
-2. ...
+> /home
+ご自宅の最寄り駅を「駅名」の形式で入力してください（例: 横浜駅、渋谷駅）:
+> 横浜駅
+了解しました! ご自宅を 横浜駅 (lat=35.4657, lon=139.6223) として保存しました.
 
-> 渋谷から池袋、人混み避けたい
-埼京線（20 min, 0 乗換, crowding=0.46）が一番空いています...
+> 家の近くでゆっくりできるカフェ
+横浜駅周辺でおすすめのカフェをいくつかご紹介します...
+
+> 家から池袋へ
+横浜駅から池袋までのルートをご案内します。
+- ルート 1: 約527分, 0乗換, 混雑スコア 0.345
+
+> /help
+Available commands:
+  /home           Set or change your saved home station
+  /forget-home    Clear your saved home
+  /help           Show this help
+  exit / quit / q Leave the REPL
 
 > exit
 ```
 
-Type `exit`, `quit`, `q`, or hit `Ctrl-D` to leave the REPL.
+Type `exit`, `quit`, `q`, or hit `Ctrl-D` to leave the REPL. Slash commands (`/home`, `/forget-home`, `/help`) work at any point in the conversation.
 
 For a no-LLM sanity check that exercises the transit + weather data path end-to-end (no `GOOGLE_API_KEY` needed):
 
@@ -86,16 +98,29 @@ The pre-commit guard also runs automatically on `git commit` (configured in `.pr
 
 | File | Contents |
 |---|---|
-| [`docs/architecture.md`](docs/architecture.md) | System overview + diagrams (L1/L2 agent graph, data flow) |
+| [`docs/architecture.md`](docs/architecture.md) | System overview + diagrams (L1/L2 agent graph, data flow, V2.5 home context flow) |
 | [`docs/module-status.md`](docs/module-status.md) | What's done, what's pending per `PLAN.md` module |
 | [`docs/transit-api.md`](docs/transit-api.md) | Transit API surface — 6 endpoints, all `/plan` params with gotchas, curl recipes |
-| [`docs/adk-usage.md`](docs/adk-usage.md) | ADK 2.3 patterns + gotchas (PydanticSchemaGenerationError, async runner, env-var quirks) |
+| [`docs/adk-usage.md`](docs/adk-usage.md) | ADK 2.3 patterns + gotchas (PydanticSchemaGenerationError, async runner, env-var quirks, closure-bound tool-layer preprocessors) |
 | [`CLAUDE.md`](CLAUDE.md) | Local-only dev guide (probe-APIs policy, architecture details, env-var reference). **Not tracked in git** — see `.gitignore`. |
-| [`PLAN.md`](PLAN.md) | Original module breakdown (V1 MVP → V2 differentiation → V3 polish) |
+| [`PLAN.md`](PLAN.md) | Original module breakdown (V1 MVP → V2 differentiation → V2.5 personal context → V3 polish) |
+
+## Personal data
+
+Your saved home (set via `/home`) lives in `data/user_profile.json`. The
+file is **gitignored** — it's personal data and never lands in the repo.
+The pre-commit guard at `scripts/pre_commit_hooks/komorebi_guard.py`
+also blocks any commit that contains home addresses, lat/lon triples,
+or phone-number patterns.
 
 ## Project status
 
-Modules 1–11 done. 147 tests passing. See [`docs/module-status.md`](docs/module-status.md) for the full breakdown. V3 tasks (BigQuery integration, dashboard, Cloud Run deploy) are not scheduled.
+Modules 1–11 done; **Module 15 (V2.5 personal context)** shipped with 47
+new tests for `models/user_profile.py` + home-resolution plumbing in
+`agents/route_agent.py` / `agents/coordinator.py` / `main.py`. **249
+tests** total. See [`docs/module-status.md`](docs/module-status.md) for
+the full breakdown. V3 tasks (BigQuery integration, dashboard, Cloud
+Run deploy) are not scheduled.
 
 ## How it works
 

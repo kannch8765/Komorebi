@@ -31,8 +31,11 @@ CLAUDE.md
 scripts/doc_check_hook.sh
 scripts/post_push_test.sh
 
-# Local API usage observability (Google Places API call counter).
-# Best-effort disk writes from tools/places_api.py land here.
+# Local-only runtime data — NEVER commit:
+# - data/places_api_usage.json: Google Places API call counter
+#   (best-effort disk writes from tools/places_api.py)
+# - data/user_profile.json: the user's home location + future personal
+#   context (PII; see models/user_profile.py)
 data/
 
 # IDE
