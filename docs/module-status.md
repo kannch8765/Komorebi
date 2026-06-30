@@ -95,7 +95,7 @@ the Places sub-agent in and inject the `exposure_comfort` slider into the
 delegation instruction. Also rebuilt the runner for async ADK 2.3 and
 swapped to `gemini-3.1-flash-lite` (`648f473`).
 
-**Module 15 — V2.5 Personal Context** (`<pending — see §8>`). Adds
+**Module 15 — V2.5 Personal Context** (`0025400`). Adds
 `models/user_profile.py` (frozen `HomeLocation` dataclass + `UserProfile`
 JSON persistence with atomic write via `tmp + os.replace`,
 `SCHEMA_VERSION = 1`). `agents/route_agent.py` gains a closure-bound
