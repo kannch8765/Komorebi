@@ -36,7 +36,7 @@ wins — please update this file in the same PR that changes the state.
 | 11 | Coordinator V2 | done | `agents/coordinator.py` (updated) | `tests/test_coordinator.py` (6) | Adds Places sub-agent + slider injection. |
 | 12 | BigQuery Integration | not started | `tools/bigquery.py` (planned) | — | Analytics on route/crowding queries. |
 | 13 | Dashboard | not started | TBD (planned) | — | Looker or web dashboard for crowding trends. |
-| 14 | Cloud Run Deployment | not started | `Dockerfile`, `cloudbuild.yaml` (planned) | — | Container + Cloud Build pipeline. |
+| 14 | Cloud Run Deployment | partial | `server.py`, `Dockerfile`, `.env.example`, `docs/deployment.md` | `tests/test_server.py` (15) | FastAPI wrapper over the Coordinator. `GET /health` (liveness, no LLM call) + `POST /query` (LLM-backed, defaults exposure_comfort=3). Multi-stage Dockerfile uses `ghcr.io/astral-sh/uv:latest` for the uv binary and respects `$PORT` for Cloud Run / Railway / Render. **Manual deployment step not yet exercised** — Cloud Run requires `gcloud` CLI + billing-enabled project which ゆう must set up. See §9. |
 | 15 | UserProfile + Home Resolution (V2.5) | done | `models/user_profile.py`, `agents/route_agent.py`, `agents/coordinator.py`, `main.py` | `tests/test_user_profile.py` (47) + `test_route_agent.py` (19) + `test_coordinator.py` (13) + `test_main.py` (24) | Three-layer home-keyword resolution (Coordinator instruction + sub-agent instruction + closure-bound tool preprocessor). REPL slash commands: `/home`, `/forget-home`, `/help`. `data/user_profile.json` is gitignored (PII). See §8. |
 
 ---
@@ -148,9 +148,29 @@ later analysis. Deprioritize until we have real users; in the meantime
 BigQuery tables from Module 12. Pure-stretch goal; no point building the
 analytics pipeline before the data layer exists.
 
-**Module 14 — Cloud Run Deployment.** `Dockerfile` + `cloudbuild.yaml` to ship
-Komorebi as a web service. Defer until the UX surface settles — running it
-locally via `main.py` is fine for development.
+**Module 14 — Cloud Run Deployment.** `server.py` exposes the Coordinator as
+a REST API (`GET /health` for liveness, `POST /query` for LLM-backed answers).
+Multi-stage `Dockerfile` based on `python:3.11-slim` + `ghcr.io/astral-sh/uv`
+for the uv binary; CMD respects `$PORT` so Cloud Run / Railway / Render all
+work without code changes. `.env.example` documents required keys
+(`GOOGLE_API_KEY`, optional `GEMINI_API_KEY` legacy alias, `GOOGLE_PLACES_API_KEY`,
+`PORT`, optional `KOMOREBI_HOME_*` for headless home setting). **Manual
+deployment has not yet been executed** — Cloud Run requires the `gcloud` CLI
+and a billing-enabled GCP project, which ゆう must set up. Dockerfile + server
+are tested locally via `uv run pytest` (15 cases in `tests/test_server.py`
+cover health endpoint, query validation, 503/500/placeholder branches,
+env-key precedence). Local smoke test recipe (ゆう to run):
+```bash
+docker build -t komorebi .
+docker run -p 8080:8080 \
+  -e GOOGLE_API_KEY=$GOOGLE_API_KEY \
+  -e GOOGLE_PLACES_API_KEY=$GOOGLE_PLACES_API_KEY \
+  komorebi
+curl http://localhost:8080/health
+curl -X POST http://localhost:8080/query \
+  -H 'content-type: application/json' \
+  -d '{"query":"横浜のカフェを教えて"}'
+```
 
 ---
 
@@ -261,12 +281,12 @@ there when adding new home-reference patterns.
 
 ## 7. Test counts
 
-- **260 tests** across **13 files** (`tests/test_coordinator.py`,
+- **276 tests** across **14 files** (`tests/test_coordinator.py`,
   `test_crowding.py`, `test_main.py`, `test_places.py`, `test_places_agent.py`,
-  `test_route_agent.py`, `test_transit.py`, `test_user_preferences.py`,
-  `test_user_profile.py` *(V2.5)*, `test_weather.py`, `test_weather_agent.py`,
-  plus `__init__.py`).
-- Full-suite runtime is **~2.1s** on a warm cache (collection alone is
+  `test_route_agent.py`, `test_server.py` *(Module 14)*, `test_transit.py`,
+  `test_user_preferences.py`, `test_user_profile.py` *(V2.5)*,
+  `test_weather.py`, `test_weather_agent.py`, plus `__init__.py`).
+- Full-suite runtime is **~1.4s** on a warm cache (collection alone is
   ~0.24s).
 - Run with `uv run pytest` from the repo root.
 - A pre-commit guard at `scripts/pre_commit_hooks/komorebi_guard.py`
