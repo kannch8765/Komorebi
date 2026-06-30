@@ -235,3 +235,38 @@ def test_create_coordinator_crowding_rule_mandates_route_agent():
     assert "general knowledge" in instruction.lower(), (
         "crowding rule should explicitly forbid general-knowledge answers"
     )
+
+
+# ---------------------------------------------------------------------------
+# Time-budget routing rule (post-V2.5 patterns test)
+# ---------------------------------------------------------------------------
+
+
+def test_create_coordinator_time_budget_rule_lists_keywords():
+    """Time-budget rule should enumerate the keywords that trigger it."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    for keyword in ("N分", "N時間", "within X minutes"):
+        assert keyword in instruction, f"time-budget rule missing keyword {keyword!r}"
+
+
+def test_create_coordinator_time_budget_rule_mandates_route_first():
+    """When a time budget is specified, route_agent must be called FIRST to
+    verify reachability, THEN places_agent for the verified destination.
+    The budget is a HARD constraint, not a soft proximity signal."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    # Rule text describes the order constraint.
+    assert "route_agent FIRST" in instruction or "FIRST to verify" in instruction
+    assert "places_agent" in instruction  # referenced in the chain
+    assert "HARD constraint" in instruction, (
+        "time-budget rule should explicitly label the budget as a HARD constraint"
+    )
