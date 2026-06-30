@@ -257,33 +257,40 @@ def test_create_coordinator_time_budget_rule_lists_keywords():
         assert keyword in instruction, f"time-budget rule missing keyword {keyword!r}"
 
 
-def test_create_coordinator_time_budget_rule_mandates_route_first():
-    """When a time budget is specified, route_agent must be called FIRST to
-    verify reachability, THEN places_agent for the verified destination.
-    The budget is a HARD constraint, not a soft proximity signal."""
+def test_create_coordinator_time_budget_rule_has_three_step_recipe():
+    """Fix 3 v3: time-budget rule is a concrete 3-step recipe (places_agent
+    candidates → route_agent per candidate → filter by budget). This is the
+    fix for the 'no destination = nothing to verify' problem."""
     pytest.importorskip("google.adk")
 
     from agents.coordinator import create_coordinator
 
     coordinator = create_coordinator()
     instruction = coordinator.instruction
-    # Rule text describes the order constraint.
-    assert "route_agent FIRST" in instruction or "FIRST to verify" in instruction
-    assert "places_agent" in instruction  # referenced in the chain
-    assert "HARD constraint" in instruction, (
-        "time-budget rule should explicitly label the budget as a HARD constraint"
+    # Recipe anchor words from ゆう's spec.
+    assert "TIME-BUDGET RULE" in instruction
+    assert "Step 1" in instruction and "places_agent" in instruction
+    assert "Step 2" in instruction and "route_agent" in instruction
+    assert "Step 3" in instruction
+    # The recipe should mention dropping non-fitting candidates.
+    assert "Drop the rest" in instruction or "Drop the rest." in instruction
+    # Plus a fallback for "no candidates fit".
+    assert "NO candidates" in instruction or "no candidates" in instruction
+
+
+def test_create_coordinator_default_place_type_for_vague_queries():
+    """Pattern 1 regression fix: vague 'おすすめの場所' queries should default
+    to place_type='cafe' and delegate immediately, not ask for clarification."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    # The FIND A PLACE rule should explicitly handle vague queries.
+    assert "おすすめの場所" in instruction, (
+        "FIND A PLACE rule should explicitly mention the vague 'おすすめの場所' phrasing"
     )
-
-
-def test_create_coordinator_time_budget_rule_is_hard_rule():
-    """Fix 3 refinement: the time-budget rule is now a 'HARD RULE' block
-    with MUST + 'NOT a suggestion' phrasing so the LLM treats it as binding."""
-    pytest.importorskip("google.adk")
-
-    from agents.coordinator import create_coordinator
-
-    coordinator = create_coordinator()
-    instruction = coordinator.instruction
-    assert "HARD RULE" in instruction
-    assert "MUST" in instruction
-    assert "NOT a suggestion" in instruction or "NOT a fuzzy hint" in instruction
+    # And tell the LLM to default to cafe rather than asking.
+    assert "default to 'cafe'" in instruction or "default to cafe" in instruction
+    assert "do NOT ask for clarification" in instruction or "do not ask for clarification" in instruction.lower()
