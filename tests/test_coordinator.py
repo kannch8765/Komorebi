@@ -243,14 +243,17 @@ def test_create_coordinator_crowding_rule_mandates_route_agent():
 
 
 def test_create_coordinator_time_budget_rule_lists_keywords():
-    """Time-budget rule should enumerate the keywords that trigger it."""
+    """Time-budget rule should enumerate unit-based keywords (broader than
+    digit matching) so the LLM triggers on '時間内' / '分以内' / 'N時間' /
+    'within X minutes' etc. — not just on the literal letter N."""
     pytest.importorskip("google.adk")
 
     from agents.coordinator import create_coordinator
 
     coordinator = create_coordinator()
     instruction = coordinator.instruction
-    for keyword in ("N分", "N時間", "within X minutes"):
+    # Broader keyword set per Fix 3 refinement: match time UNITS, not digits.
+    for keyword in ("時間内", "分以内", "分で", "時間で", "以内", "N時間", "within X minutes"):
         assert keyword in instruction, f"time-budget rule missing keyword {keyword!r}"
 
 
@@ -270,3 +273,17 @@ def test_create_coordinator_time_budget_rule_mandates_route_first():
     assert "HARD constraint" in instruction, (
         "time-budget rule should explicitly label the budget as a HARD constraint"
     )
+
+
+def test_create_coordinator_time_budget_rule_is_hard_rule():
+    """Fix 3 refinement: the time-budget rule is now a 'HARD RULE' block
+    with MUST + 'NOT a suggestion' phrasing so the LLM treats it as binding."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    assert "HARD RULE" in instruction
+    assert "MUST" in instruction
+    assert "NOT a suggestion" in instruction or "NOT a fuzzy hint" in instruction
