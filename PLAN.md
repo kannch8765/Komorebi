@@ -99,7 +99,7 @@
     `test_route_agent.py`, `test_coordinator.py`, `test_main.py`
 - **Dependencies**: Module 6 (Coordinator MVP), Module 4 (Route Agent)
 - **Acceptance**:
-  - `uv run pytest` → 249 passing
+  - `uv run pytest` → 260 passing
   - End-to-end: `/home 横浜駅` → `> 家から池袋へ` returns a real route
     from `横浜駅` (not the literal string `家`)
   - Without a saved home, the Coordinator politely asks the user for

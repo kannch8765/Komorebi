@@ -117,7 +117,7 @@ or phone-number patterns.
 
 Modules 1–11 done; **Module 15 (V2.5 personal context)** shipped with 47
 new tests for `models/user_profile.py` + home-resolution plumbing in
-`agents/route_agent.py` / `agents/coordinator.py` / `main.py`. **249
+`agents/route_agent.py` / `agents/coordinator.py` / `main.py`. **260
 tests** total. See [`docs/module-status.md`](docs/module-status.md) for
 the full breakdown. V3 tasks (BigQuery integration, dashboard, Cloud
 Run deploy) are not scheduled.

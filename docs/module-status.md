@@ -185,15 +185,26 @@ locally via `main.py` is fine for development.
   `UserProfile` + bump `SCHEMA_VERSION` when adding them, and remember
   `data/user_profile.json` is gitignored (real user data must not
   enter the repo).
+- **Coordinator routing-rule tightening (`028150f`, `0c7098f`).** Three
+  patterns from the V2.5 live test surfaced two LLM-routing soft-fails:
+  (1) "人は多いのかな" was answered with general-knowledge vibes instead
+  of route_agent's `crowding_score`; (2) "１時間内いける" was treated as
+  a soft proximity hint instead of a hard constraint. Both fixed by
+  adding explicit routing rules to the Coordinator's instruction —
+  see `agents/coordinator.py` for the "CROWDING keywords" and
+  "TIME BUDGET" rules. Tests in `tests/test_coordinator.py` assert
+  the rule keywords and the explicit anti-vibes / HARD-constraint
+  phrasing.
 - **The 527-min Yokohama→Ikebukuro mystery.** In the V2.5 end-to-end
   live test the transit API returned a route time of ~527 min for a
   trip that's normally ~30 min. Likely the ranking picked an outlier
   itinerary (multiple transfers, walking legs). The home-resolution
   feature works correctly; the route-quality issue is a separate
-  diagnostic. Suspected cause: the `/plan` endpoint's `via` / mode
-  filtering isn't engaged when no constraints are given, so the first
-  route can be unusual. Worth a `tools/transit_api.py` audit when we
-  revisit route quality.
+  diagnostic. **Fixed in `38197b0` (route-quality filter)** —
+  `_filter_route_outliers()` in `agents/route_agent.py` drops any route
+  with `duration_min > 3 * min(duration_min for r in routes)` before
+  ranking. Still worth a `tools/transit_api.py` audit later for the
+  underlying API behavior, but the user-facing symptom is gone.
 
 ---
 
@@ -250,7 +261,7 @@ there when adding new home-reference patterns.
 
 ## 7. Test counts
 
-- **249 tests** across **13 files** (`tests/test_coordinator.py`,
+- **260 tests** across **13 files** (`tests/test_coordinator.py`,
   `test_crowding.py`, `test_main.py`, `test_places.py`, `test_places_agent.py`,
   `test_route_agent.py`, `test_transit.py`, `test_user_preferences.py`,
   `test_user_profile.py` *(V2.5)*, `test_weather.py`, `test_weather_agent.py`,
