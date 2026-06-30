@@ -200,3 +200,38 @@ def test_create_coordinator_sub_agents_unaffected_by_home():
     coordinator = create_coordinator(home=home)
     sub_agent_names = {a.name for a in coordinator.sub_agents}
     assert sub_agent_names == {"route_agent", "weather_agent", "places_agent"}
+
+
+# ---------------------------------------------------------------------------
+# Crowding routing rule (post-V2.5 patterns test)
+# ---------------------------------------------------------------------------
+
+
+def test_create_coordinator_crowding_rule_lists_keywords():
+    """Crowding routing rule should enumerate the keywords that trigger it."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    # All four Japanese keywords + two English ones must appear in the rule.
+    for keyword in ("混み", "混雑", "人多い", "空いてる", "crowded", "busy"):
+        assert keyword in instruction, f"crowding rule missing keyword {keyword!r}"
+
+
+def test_create_coordinator_crowding_rule_mandates_route_agent():
+    """When crowding keywords appear, the LLM MUST delegate to route_agent
+    (not answer with general knowledge about how crowded a station is)."""
+    pytest.importorskip("google.adk")
+
+    from agents.coordinator import create_coordinator
+
+    coordinator = create_coordinator()
+    instruction = coordinator.instruction
+    assert "crowding_score" in instruction, (
+        "crowding rule should reference crowding_score (the real data field)"
+    )
+    assert "general knowledge" in instruction.lower(), (
+        "crowding rule should explicitly forbid general-knowledge answers"
+    )
