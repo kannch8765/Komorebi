@@ -322,3 +322,99 @@ def test_create_route_agent_no_home_does_not_bind(mocker):
     func(origin="自宅", destination="池袋")
     call = TransitAPIClient.get_routes.call_args
     assert call.kwargs["origin"] == "自宅"  # unchanged — no home bound
+
+
+# ---------------------------------------------------------------------------
+# Outlier filter (V2.5: drop routes where duration > 3x fastest)
+# ---------------------------------------------------------------------------
+
+
+from agents.route_agent import filter_outlier_routes  # noqa: E402
+
+
+def _route(name: str, duration_min: int) -> RouteRecommendation:
+    """Build a minimal valid RouteRecommendation with a given duration."""
+    return RouteRecommendation(
+        name=name,
+        duration_min=duration_min,
+        transfers=0,
+        crowding_score=0.5,
+        extra_time_min=0,
+        stations=["A", "B"],
+        lines=["Line"],
+    )
+
+
+def test_filter_outlier_routes_drops_3x_outlier():
+    """The 60-min route (>3x the 5-min fastest) is dropped; 5 and 12 remain."""
+    routes = [
+        _route("fast", 5),
+        _route("medium", 12),
+        _route("outlier", 60),
+    ]
+    result = filter_outlier_routes(routes)
+    names = [r.name for r in result]
+    assert names == ["fast", "medium"]
+
+
+def test_filter_outlier_routes_empty_in_empty_out():
+    """Empty input returns empty output (no min() crash)."""
+    assert filter_outlier_routes([]) == []
+
+
+def test_filter_outlier_routes_all_within_3x_keeps_all():
+    """When every route is within 3x the fastest, nothing is dropped."""
+    routes = [
+        _route("a", 10),
+        _route("b", 20),  # 20 < 3*10 = 30 — keep
+        _route("c", 29),  # 29 < 30 — keep (boundary: equal stays)
+    ]
+    result = filter_outlier_routes(routes)
+    assert [r.name for r in result] == ["a", "b", "c"]
+
+
+def test_filter_outlier_routes_boundary_at_3x_is_kept():
+    """A route exactly at 3x the fastest is kept (threshold is strictly > 3x)."""
+    routes = [
+        _route("fast", 10),
+        _route("edge", 30),  # exactly 3x — kept
+        _route("over", 31),  # 31 > 30 — dropped
+    ]
+    result = filter_outlier_routes(routes)
+    assert [r.name for r in result] == ["fast", "edge"]
+
+
+def test_filter_outlier_routes_single_route_kept():
+    """A single-route list passes through (min == self, factor * self >= self)."""
+    routes = [_route("only", 99)]
+    assert filter_outlier_routes(routes) == routes
+
+
+def test_filter_outlier_routes_does_not_mutate_input():
+    """The input list is not reordered or modified."""
+    routes = [
+        _route("fast", 5),
+        _route("outlier", 60),
+        _route("medium", 12),
+    ]
+    snapshot = [r.name for r in routes]
+    filter_outlier_routes(routes)
+    assert [r.name for r in routes] == snapshot
+
+
+def test_get_transit_routes_drops_outlier_before_ranking(mocker):
+    """End-to-end: a 527-min outlier in the API response is not in the result."""
+    instance = mocker.patch("agents.route_agent.TransitAPIClient").return_value
+    instance.get_routes.return_value.routes = [
+        _route("normal", 30),
+        _route("outlier_527min", 527),  # ~17x the fastest — must be dropped
+        _route("medium", 35),
+    ]
+
+    result = get_transit_routes("横浜", "池袋")
+
+    names = [r["name"] for r in result["routes"]]
+    assert "outlier_527min" not in names
+    assert "normal" in names
+    assert "medium" in names
+    assert len(result["routes"]) == 2

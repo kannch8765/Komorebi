@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from models.schemas import RouteResponse
+from models.schemas import RouteRecommendation, RouteResponse
 from tools.transit_api import TransitAPIClient
 
 if TYPE_CHECKING:
@@ -52,6 +52,34 @@ _HOME_KEYWORDS: tuple[str, ...] = (
     "自分の場所", "私の場所",                     # "my place"
     "current location", "departure", "from here",  # English synonyms
 )
+
+
+def filter_outlier_routes(
+    routes: list[RouteRecommendation],
+    factor: float = 3.0,
+) -> list[RouteRecommendation]:
+    """Drop routes whose duration is > factor * fastest duration.
+
+    V2.5: the transit API can occasionally return an outlier itinerary
+    (e.g. a 527-min 横浜→池袋 route alongside realistic ~30-min options).
+    The ranker would happily promote such a route if its crowding score
+    is favorable, so we filter before ranking.
+
+    Args:
+        routes: candidate routes from the API.
+        factor: multiplier for the fastest duration. Routes with
+                duration_min > factor * fastest are dropped. Default 3.0.
+
+    Returns:
+        New list of routes with outliers removed. Original list untouched.
+        Empty list in → empty list out.
+    """
+    if not routes:
+        return []
+
+    fastest = min(r.duration_min for r in routes)
+    threshold = factor * fastest
+    return [r for r in routes if r.duration_min <= threshold]
 
 
 def _resolve_home_keyword(text: str, home_label: str) -> str:
@@ -128,8 +156,11 @@ def _get_transit_routes_impl(
         max_transfers=max_transfers,
         time=time,
     )
+    # Drop outliers BEFORE ranking so the ranker doesn't waste cycles on
+    # clearly broken itineraries (e.g. a 527-min 横浜→池袋 route).
+    candidates = filter_outlier_routes(response.routes)
     ranked = rank_routes(
-        response.routes, UserPreferences(exposure_comfort=exposure_comfort)
+        candidates, UserPreferences(exposure_comfort=exposure_comfort)
     )
     return RouteResponse(routes=ranked).model_dump()
 
