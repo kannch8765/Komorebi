@@ -26,7 +26,7 @@ COPY server.py main.py ./
 
 # Install deps into the system Python (no venv needed in the container).
 # --no-dev skips pytest/pre-commit; --frozen uses uv.lock exactly.
-RUN uv pip install --system --no-dev --frozen .
+RUN uv pip install --system .
 
 # Cloud Run injects $PORT; default 8080 works for local docker run.
 ENV PORT=8080
